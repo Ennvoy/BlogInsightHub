@@ -1,0 +1,13 @@
+{
+  "startedAt": "2025-11-27T19:39:35.190Z",
+  "lastUpdatedAt": null,
+  "gemini": {
+    "calls": 0,
+    "promptTokens": 0,
+    "candidateTokens": 0,
+    "totalTokens": 0
+  },
+  "serpapi": {
+    "calls": 0
+  }
+}
