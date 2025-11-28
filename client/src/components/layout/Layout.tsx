@@ -19,7 +19,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const navItems = [
-    { href: "/", label: "總覽 Dashboard", icon: LayoutDashboard },
     { href: "/search", label: "搜尋條件 Input", icon: Search },
     { href: "/results", label: "搜尋結果 Results", icon: ListFilter },
     { href: "/review", label: "人工審核 Review", icon: CheckSquare },
