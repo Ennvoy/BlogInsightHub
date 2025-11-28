@@ -35,7 +35,7 @@
     "serpRank": "#2",
     "contactEmail": "chara.yu@condenast.com.tw",
     "aiAnalysis": "",
-    "status": "pending_review",
+    "status": "approved",
     "lastUpdatedAt": "2025-08-27T09:43:19.890Z",
     "activityStatus": "Normal"
   },
@@ -55,7 +55,7 @@
     "serpRank": "#3",
     "contactEmail": "a16623kimo@yahoo.com.tw",
     "aiAnalysis": "",
-    "status": "pending_review",
+    "status": "approved",
     "lastUpdatedAt": "2025-10-16T12:39:58.000Z",
     "activityStatus": "Normal"
   },
@@ -75,7 +75,7 @@
     "serpRank": "#4",
     "contactEmail": "gracehsu520@gmail.com",
     "aiAnalysis": "",
-    "status": "pending_review",
+    "status": "rejected",
     "lastUpdatedAt": "2025-08-11T15:18:21.000Z",
     "activityStatus": "Normal"
   }

@@ -1,12 +1,13 @@
-// server.js
+// server.js / server/index.ts
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import axios from "axios";
-import * as cheerio from "cheerio"; // ✅ 新增：用來解析 HTML 數圖片
+import * as cheerio from "cheerio"; // ✅ 用來解析 HTML 數圖片
 import { createServer } from "http";
+import path from "path";             // ✅ 新增：提供前端靜態檔案
 import { initializeScheduler } from "./scheduler"; // ✅ 導入排程引擎
-import { registerRoutes } from "./routes"; // ✅ 導入路由
+import { registerRoutes } from "./routes";         // ✅ 導入路由
 
 const app = express();
 
@@ -15,9 +16,7 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
-
 // 原本的其他 app.use(...)、app.post(...) 等程式碼放在這下面
-
 app.use(cors());
 app.use(express.json());
 
@@ -26,7 +25,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Google AI Studio 取得
 const SERP_API_KEY = process.env.SERP_API_KEY;     // SerpAPI Dashboard 取得
 
 // ==============================
-// 工具：抓 HTML、計算 <img> 數量
+// 工具：錯誤訊息整理
 // ==============================
 function getErrorDetail(err: unknown): string {
   try {
@@ -42,6 +41,9 @@ function getErrorDetail(err: unknown): string {
   }
 }
 
+// ==============================
+// 工具：抓 HTML、計算 <img> 數量
+// ==============================
 async function hasEnoughImages(url: string, min = 3): Promise<boolean> {
   try {
     const { data: html } = await axios.get(url, {
@@ -90,7 +92,6 @@ ${keywords}
 `;
 
     const GEMINI_MODEL = "models/gemini-2.0-flash"; // or 2.5 flash
-
     const url = `https://generativelanguage.googleapis.com/v1beta/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     const { data } = await axios.post(url, {
@@ -167,7 +168,7 @@ app.post("/api/search/test", async (req, res) => {
       String(w).toLowerCase()
     );
 
-    const allResults = [];
+    const allResults: any[] = [];
 
     for (const kw of allKeywords) {
       if (!kw) continue;
@@ -191,7 +192,8 @@ app.post("/api/search/test", async (req, res) => {
         // 排除關鍵字
         if (
           badWords.some(
-            (w: any) => w && (title.includes(String(w)) || snippet.includes(String(w)))
+            (w: any) =>
+              w && (title.includes(String(w)) || snippet.includes(String(w)))
           )
         ) {
           console.log("排除負面關鍵字:", kw, "→", title || snippet);
@@ -206,7 +208,7 @@ app.post("/api/search/test", async (req, res) => {
       // -------- 第 2 階段：必須包含圖片（抓 HTML 算 <img>） --------
       if (mustContainImages) {
         console.log("啟用圖片數量過濾（至少 3 張）");
-        const tmp = [];
+        const tmp: any[] = [];
         for (const item of baseFiltered) {
           const url = item.link;
           if (!url) continue;
@@ -247,8 +249,22 @@ app.post("/api/search/test", async (req, res) => {
 // ==============================
 const httpServer = createServer(app);
 
-// ✅ 在 listen 前先註冊所有路由
+// ✅ 在 listen 前先註冊所有路由 + 加上前端靜態檔案（production）
 registerRoutes(httpServer, app).then(() => {
+  // 只有在正式環境（NODE_ENV=production，例如 Render）才提供前端
+  if (process.env.NODE_ENV === "production") {
+    // build 完成後，前端會在 dist/public 底下
+    const publicDir = path.join(process.cwd(), "dist", "public");
+
+    // 服務靜態檔案（/assets/... 等）
+    app.use(express.static(publicDir));
+
+    // 除了 /api/... 以外的 GET，都回傳前端 index.html
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(publicDir, "index.html"));
+    });
+  }
+
   httpServer.listen(PORT, async () => {
     console.log(`API server listening on http://127.0.0.1:${PORT}`);
 
@@ -256,4 +272,3 @@ registerRoutes(httpServer, app).then(() => {
     await initializeScheduler();
   });
 });
-
