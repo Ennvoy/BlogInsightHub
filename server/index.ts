@@ -9,6 +9,18 @@ import { initializeScheduler } from "./scheduler"; // ✅ 導入排程引擎
 import { registerRoutes } from "./routes"; // ✅ 導入路由
 
 const app = express();
+
+// === 健康檢查：方便測試 Render 有沒有活著 ===
+app.get("/", (req, res) => {
+  res.send("BlogInsightHub backend OK ✅");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+// 原本的其他 app.use(...)、app.post(...) 等程式碼放在這下面
+
 app.use(cors());
 app.use(express.json());
 
