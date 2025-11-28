@@ -10,14 +10,11 @@ import { registerRoutes } from "./routes"; // ✅ 導入路由
 
 const app = express();
 
-// === 健康檢查：方便測試 Render 有沒有活著 ===
-app.get("/", (req, res) => {
-  res.send("BlogInsightHub backend OK ✅");
-});
-
+// === 健康檢查：之後用這個路徑測後端狀態 ===
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
+
 
 // 原本的其他 app.use(...)、app.post(...) 等程式碼放在這下面
 
