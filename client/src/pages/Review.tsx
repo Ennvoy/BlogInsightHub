@@ -11,7 +11,8 @@ import {
   Clock,
   AlertCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { loadTemplates } from "@/lib/templates";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getBloggerLeads, updateBloggerLead } from "@/lib/api";
@@ -28,6 +29,53 @@ export default function ReviewPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [direction, setDirection] = useState(0);
 
+  const [selectedEmailTemplateIdx, setSelectedEmailTemplateIdx] = useState(0);
+  const [emailTemplates, setEmailTemplates] = useState(() => {
+    try {
+      return loadTemplates();
+    } catch (e) {
+      console.error("loadTemplates failed", e);
+      return [];
+    }
+  });
+
+  /**
+   * 當 templates 數量變動時，確保選中 index 不會超出範圍
+   * 以及監聽外部 template 變更事件（localStorage / custom event）
+   * 注意：hooks 必須在所有早期 return 之前宣告，避免 "Rendered more hooks" 錯誤
+   */
+  useEffect(() => {
+    if (emailTemplates.length === 0) return;
+    if (selectedEmailTemplateIdx >= emailTemplates.length) {
+      setSelectedEmailTemplateIdx(emailTemplates.length - 1);
+    }
+  }, [emailTemplates, selectedEmailTemplateIdx]);
+
+  useEffect(() => {
+    const onUpdated = (e: any) => {
+      try {
+        const tpls = e?.detail ?? loadTemplates();
+        setEmailTemplates(tpls);
+      } catch (err) {
+        setEmailTemplates(loadTemplates());
+      }
+    };
+
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === "bi_email_templates") {
+        setEmailTemplates(loadTemplates());
+      }
+    };
+
+    window.addEventListener("bi:templates:updated", onUpdated as EventListener);
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("bi:templates:updated", onUpdated as EventListener);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   // 只抓待審核的名單
   const { data: allLeads = [], isLoading } = useQuery({
     queryKey: ["blogger-leads", "pending_review"],
@@ -40,29 +88,22 @@ export default function ReviewPage() {
       return updateBloggerLead(leadId, { status });
     },
     onSuccess: (_data, variables) => {
-      // 1) 從 pending_review 名單中移除這一筆
       let newLength = 0;
+
       queryClient.setQueryData(
         ["blogger-leads", "pending_review"],
         (old: any) => {
-          if (!old) {
-            newLength = 0;
-            return old;
-          }
-          const list = (old as any[]).filter(
-            (l) => l.id !== variables.leadId
-          );
+          if (!old) return old;
+          const list = old.filter((l: any) => l.id !== variables.leadId);
           newLength = list.length;
           return list;
         }
       );
 
-      // 2) 調整 currentIndex：確保不超出範圍
       setCurrentIndex((prev) =>
         newLength === 0 ? 0 : Math.min(prev, newLength - 1)
       );
 
-      // 3) 其他頁面（結果 / 統計）可以重刷
       queryClient.invalidateQueries({ queryKey: ["blogger-leads"] });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
 
@@ -74,7 +115,6 @@ export default function ReviewPage() {
         description: "決定已記錄",
       });
 
-      // 把動畫方向歸零
       setDirection(0);
     },
     onError: (err: any) => {
@@ -91,7 +131,6 @@ export default function ReviewPage() {
     const currentLead = allLeads[currentIndex];
     if (!currentLead) return;
 
-    // 先設定離場方向，給 framer-motion 用
     setDirection(decision === "yes" ? 1 : -1);
 
     reviewMutation.mutate({
@@ -99,7 +138,6 @@ export default function ReviewPage() {
       decision,
       notes: null,
     });
-    // 不再手動改 currentIndex，交給 onSuccess 依照新列表處理
   };
 
   if (isLoading) {
@@ -110,7 +148,7 @@ export default function ReviewPage() {
     );
   }
 
-  // ⚠ 一定要在取 currentItem 之前就處理「全部審完」的狀況
+  // 全部審完
   if (allLeads.length === 0) {
     return (
       <div className="flex items-center justify-center h-[80vh]">
@@ -128,39 +166,41 @@ export default function ReviewPage() {
     );
   }
 
-  // 到這裡保證 allLeads 至少有 1 筆
   const currentItem = allLeads[currentIndex];
 
-  const activityStatus =
-    (currentItem as any)?.activityStatus || "Unknown";
-  const lastUpdatedAt =
-    ((currentItem as any)?.lastUpdatedAt as
-      | string
-      | null
-      | undefined) ?? null;
+  const activityStatus = currentItem?.activityStatus || "Unknown";
+  const lastUpdatedAt = currentItem?.lastUpdatedAt ?? null;
   const lastUpdatedLabel = lastUpdatedAt
     ? lastUpdatedAt.slice(0, 10)
     : "未知";
 
-  const remaining = allLeads.length; // 已經是「剩餘待審」的筆數（包含目前這一筆）
+  const remaining = allLeads.length;
+
+
+  const renderTemplateText = (text?: string) => {
+    if (!text) return "";
+    return text
+      .replace(/{bloggerName}/g, currentItem.bloggerName || "部落客")
+      .replace(/{topic}/g, currentItem.title || "主題")
+      .replace(/{domain}/g, currentItem.domain || "")
+      .replace(/{contactEmail}/g, currentItem.contactEmail || "");
+  };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 pb-40">
+      {/* 標題區 */}
       <div className="flex flex-col items-center text-center space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          人工審核 (Rapid Review)
-        </h1>
+        <h1 className="text-3xl font-bold tracking-tight">人工審核 (Rapid Review)</h1>
         <p className="text-muted-foreground">
           快速篩選高潛力名單。YES 進入開發流程, NO 直接歸檔。
         </p>
         <div className="flex items-center gap-2 text-sm font-medium bg-muted px-3 py-1 rounded-full mt-2">
           <Clock className="w-3 h-3" />
-          <span data-testid="remaining-count">
-            剩餘待審: {remaining} 筆
-          </span>
+          <span data-testid="remaining-count">剩餘待審: {remaining} 筆</span>
         </div>
       </div>
 
+      {/* 主卡片 */}
       <div className="relative h-[600px] w-full flex justify-center">
         <AnimatePresence mode="wait">
           <motion.div
@@ -185,17 +225,11 @@ export default function ReviewPage() {
 
               <CardHeader>
                 <div className="flex justify-between items-start gap-4">
-                  <div className="space-y-1">
+                  <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <Badge
-                        variant="outline"
-                        className="text-xs font-normal"
-                      >
+                      <Badge variant="outline" className="text-xs font-normal">
                         {currentItem.domain}
                       </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {currentItem.serpRank || "N/A"} on Google
-                      </span>
                     </div>
                     <CardTitle className="text-xl leading-tight">
                       <a
@@ -209,21 +243,11 @@ export default function ReviewPage() {
                       </a>
                     </CardTitle>
                   </div>
-                  <div className="flex flex-col items-end">
-                    <div
-                      className="text-3xl font-bold text-primary"
-                      data-testid="current-score"
-                    >
-                      {currentItem.aiScore}
-                    </div>
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                      AI Score
-                    </span>
-                  </div>
                 </div>
 
+                {/* Tags */}
                 <div className="flex gap-2 pt-2 flex-wrap">
-                  {(currentItem.keywords || []).map((tag) => (
+                  {(currentItem.keywords || []).map((tag: string) => (
                     <Badge key={tag} variant="secondary" className="rounded-md">
                       {tag}
                     </Badge>
@@ -231,43 +255,42 @@ export default function ReviewPage() {
                 </div>
               </CardHeader>
 
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-6 pb-36">
+                {/* Snippet */}
                 {currentItem.snippet && (
                   <div className="p-4 bg-muted/30 rounded-lg text-sm leading-relaxed border border-border/50 italic text-muted-foreground">
                     "{currentItem.snippet}"
                   </div>
                 )}
 
+                {/* 指標 */}
                 <div className="grid grid-cols-3 gap-4">
-                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 text-center space-y-1">
+                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border text-center space-y-1">
                     <Globe className="w-5 h-5 mx-auto text-blue-500" />
                     <div className="text-lg font-bold">
-                      {currentItem.trafficEstimate || "N/A"}
+                      {currentItem.serpRank || "N/A"}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      月流量估算
-                    </div>
+                    <div className="text-xs text-muted-foreground">SerpAPI 排名</div>
                   </div>
-                  <div className="p-3 rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/50 text-center space-y-1">
+
+                  <div className="p-3 rounded-lg bg-purple-50 dark:bg-purple-950/20 border text-center space-y-1">
                     <BarChart2 className="w-5 h-5 mx-auto text-purple-500" />
                     <div className="text-lg font-bold">
-                      {currentItem.domainAuthority ?? "N/A"}
+                      {currentItem.aiScore ?? "N/A"}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      網域權重 DA
-                    </div>
+                    <div className="text-xs text-muted-foreground">AI 評分</div>
                   </div>
-                  <div className="p-3 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-100 dark:border-green-900/50 text-center space-y-1">
+
+                  <div className="p-3 rounded-lg bg-green-50 dark:bg-green-950/20 border text-center space-y-1">
                     <History className="w-5 h-5 mx-auto text-green-500" />
-                    <div className="text-lg font-bold">
-                      {activityStatus}
-                    </div>
+                    <div className="text-lg font-bold">{activityStatus}</div>
                     <div className="text-xs text-muted-foreground">
                       更新頻率 · {lastUpdatedLabel}
                     </div>
                   </div>
                 </div>
 
+                {/* AI 分析 */}
                 {currentItem.aiAnalysis && (
                   <div className="space-y-2">
                     <h4 className="text-sm font-medium flex items-center gap-2">
@@ -280,10 +303,63 @@ export default function ReviewPage() {
                   </div>
                 )}
 
-                <div className="text-xs text-muted-foreground border-t pt-4 flex justify-between">
-                  <span>
-                    Contact: {currentItem.contactEmail || "Not Found"}
-                  </span>
+                {/* 信件模板 */}
+                <div className="border-t pt-4 space-y-3">
+                  <h4 className="text-sm font-medium">開發信件模板</h4>
+
+                  <div className="p-2 border rounded-md inline-block">
+                    <div className="flex gap-2 flex-wrap">
+                      {emailTemplates.map((tpl, idx) => (
+                        <Badge
+                          key={tpl.id}
+                          variant={
+                            selectedEmailTemplateIdx === idx ? "default" : "outline"
+                          }
+                          className="cursor-pointer"
+                          onClick={() => setSelectedEmailTemplateIdx(idx)}
+                        >
+                          {tpl.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 收件者 */}
+                  <div className="space-y-2 pt-2">
+                    <div className="text-xs text-muted-foreground">收件者</div>
+                    <div className="p-2 bg-muted/50 rounded text-sm">
+                      {currentItem.contactEmail || "Not Found"}
+                    </div>
+                  </div>
+
+                  {/* 主旨 */}
+                  <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground">主旨</div>
+                    <div className="p-2 bg-muted/50 rounded text-sm font-medium">
+                      {emailTemplates.length > 0
+                        ? renderTemplateText(
+                            emailTemplates[selectedEmailTemplateIdx]?.subject
+                          )
+                        : ""}
+                    </div>
+                  </div>
+
+                  {/* 信件內容 */}
+                  <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground">信件內容</div>
+                    <div className="p-3 bg-muted/30 rounded text-sm leading-relaxed border whitespace-pre-wrap min-h-[180px] max-h-[240px] overflow-y-auto">
+                      {emailTemplates.length > 0
+                        ? renderTemplateText(
+                            emailTemplates[selectedEmailTemplateIdx]?.body
+                          )
+                        : ""}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="text-xs text-muted-foreground border-t pt-4 flex justify-between mt-4">
+                  <span>Contact: {currentItem.contactEmail || "Not Found"}</span>
                   <span>ID: #{currentItem.id.slice(0, 8)}</span>
                 </div>
               </CardContent>
@@ -292,24 +368,28 @@ export default function ReviewPage() {
         </AnimatePresence>
       </div>
 
+      {/* 按鈕 */}
       <div className="fixed bottom-8 left-0 right-0 flex justify-center gap-4 z-50 px-4 pointer-events-none">
         <Button
           size="lg"
           variant="outline"
-          className="h-16 w-32 rounded-full border-2 border-red-200 hover:bg-red-50 hover:text-red-600 hover:border-red-300 shadow-lg pointer-events-auto transition-all"
+          className="h-16 w-32 rounded-full 
+            bg-red-50 text-red-700 
+            border-2 border-red-200
+            hover:bg-red-100 hover:border-red-300 hover:text-red-800
+            shadow-lg pointer-events-auto transition-all"
           onClick={() => handleDecision("no")}
           disabled={reviewMutation.isPending}
-          data-testid="button-reject"
         >
           <ThumbsDown className="w-6 h-6 mr-2" />
           略過
         </Button>
+
         <Button
           size="lg"
           className="h-16 w-32 rounded-full bg-primary hover:bg-primary/90 shadow-lg pointer-events-auto transition-all"
           onClick={() => handleDecision("yes")}
           disabled={reviewMutation.isPending}
-          data-testid="button-approve"
         >
           <ThumbsUp className="w-6 h-6 mr-2" />
           合作

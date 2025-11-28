@@ -34,7 +34,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center">
             <Database className="w-5 h-5 text-white" />
           </div>
-          <span>BloggerDev</span>
+          <span>部落客開發系統</span>
         </div>
         <p className="text-xs text-sidebar-foreground/60 mt-2 font-mono">v1.0.2 | System Ready</p>
       </div>
@@ -62,34 +62,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       <div className="p-4 border-t border-sidebar-border">
-        <div className="bg-sidebar-accent rounded-lg p-4 space-y-3">
-          <div className="flex justify-between items-center text-xs">
-            <span className="font-medium">API Usage</span>
-            <span className="text-sidebar-primary-foreground bg-sidebar-primary px-1.5 py-0.5 rounded text-[10px]">PRO</span>
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between text-[10px] opacity-80">
-              <span>SERP Queries</span>
-              <span>842 / 1000</span>
-            </div>
-            <div className="h-1.5 bg-sidebar-foreground/10 rounded-full overflow-hidden">
-              <div className="h-full bg-sidebar-primary w-[84%] rounded-full" />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <div className="flex justify-between text-[10px] opacity-80">
-              <span>Analysis Tokens</span>
-              <span>12.5k / 50k</span>
-            </div>
-            <div className="h-1.5 bg-sidebar-foreground/10 rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 w-[25%] rounded-full" />
-            </div>
-          </div>
-        </div>
+
         
         <button className="flex items-center gap-3 w-full px-3 py-2 mt-4 text-sm font-medium text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent rounded-md transition-colors">
-          <Settings className="w-4 h-4" />
-          系統設定
+          <Link href="/settings">
+            <div className="flex items-center gap-3 w-full">
+              <Settings className="w-4 h-4" />
+              系統設定
+            </div>
+          </Link>
         </button>
       </div>
     </div>

@@ -218,7 +218,7 @@ export class DatabaseStorage implements IStorage {
         id,
         createdAt: now,
         updatedAt: now,
-        enabled: true,
+        isEnabled: (schedule as any).isEnabled ?? true,
       } as any)
       .returning();
     return results[0];

@@ -6,6 +6,7 @@ import * as cheerio from "cheerio";
 import "dotenv/config";
 import fs from "fs/promises";
 import path from "path";
+import * as cron from "node-cron";
 
 const app = express();
 app.use(cors());
@@ -271,6 +272,207 @@ async function saveLeadsFromSerp(keyword, serpResults) {
   );
   return newLeads;
 }
+
+// ==============================
+// Schedules: minimal persistence + cron registration
+// (為了相容前端 dev workflow，我在此檔案提供簡單實作，不改其他檔案)
+// ==============================
+
+const SCHEDULES_PATH = path.join(process.cwd(), "data", "schedules.json");
+
+async function readSchedules() {
+  try {
+    const buf = await fs.readFile(SCHEDULES_PATH, "utf-8");
+    return JSON.parse(buf);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function writeSchedules(schedules) {
+  await fs.mkdir(path.dirname(SCHEDULES_PATH), { recursive: true });
+  await fs.writeFile(SCHEDULES_PATH, JSON.stringify(schedules, null, 2), "utf-8");
+}
+
+const registeredTasks = new Map();
+
+function toCronExpression(schedule) {
+  const minute = Number(schedule.minute ?? 0);
+  const hour = Number(schedule.hour ?? 0);
+  if (schedule.frequency === "daily") {
+    return `${minute} ${hour} * * *`;
+  } else if (schedule.frequency === "weekly") {
+    const dow = Number(schedule.dayOfWeek ?? 0);
+    return `${minute} ${hour} * * ${dow}`;
+  } else if (schedule.frequency === "monthly") {
+    const dom = Number(schedule.dayOfMonth ?? 1);
+    return `${minute} ${hour} ${dom} * *`;
+  }
+  return `${minute} ${hour} * * *`;
+}
+
+function unregisterSchedule(scheduleId) {
+  const task = registeredTasks.get(scheduleId);
+  if (task) {
+    try { task.stop(); } catch (e) {}
+    registeredTasks.delete(scheduleId);
+    console.log(`[schedules] Unregistered schedule ${scheduleId}`);
+  }
+}
+
+function registerSchedule(schedule) {
+  try {
+    // skip if disabled or enabledAt in future
+    const now = new Date();
+    if (!schedule.isEnabled) {
+      console.log(`[schedules] Skipping disabled schedule ${schedule.id}`);
+      return;
+    }
+    if (schedule.enabledAt) {
+      const en = new Date(schedule.enabledAt);
+      if (en > now) {
+        console.log(`[schedules] Skipping schedule ${schedule.id} until ${en.toISOString()}`);
+        return;
+      }
+    }
+
+    const expr = toCronExpression(schedule);
+    console.log(`[schedules] Registering schedule ${schedule.id} (${schedule.name}) cron=${expr}`);
+
+    // ensure no duplicate
+    unregisterSchedule(schedule.id);
+
+    const API_BASE = `http://127.0.0.1:${PORT}`;
+
+    const task = cron.schedule(expr, async () => {
+      try {
+        console.log(`[schedules] Executing schedule ${schedule.id} -> calling /api/search/test`);
+        const payload = {
+          coreKeywords: schedule.coreKeywords || [],
+          longTailKeywords: [],
+          industry: schedule.searchConfig?.industry,
+          language: schedule.searchConfig?.language,
+          region: schedule.searchConfig?.region,
+          minWords: schedule.searchConfig?.minWords,
+          maxTrafficRank: schedule.searchConfig?.maxTrafficRank,
+          excludeGovEdu: schedule.searchConfig?.excludeGovEdu,
+          mustContainImages: schedule.searchConfig?.requireImages,
+          requireEmail: schedule.searchConfig?.requireEmail,
+          avoidDuplicates: schedule.searchConfig?.avoidDuplicates,
+          negativeKeywords: schedule.searchConfig?.negativeKeywords || [],
+        };
+
+        await axios.post(`${API_BASE}/api/search/test`, payload, { timeout: 60000 });
+        console.log(`[schedules] Schedule ${schedule.id} executed`);
+      } catch (err) {
+        console.error(`[schedules] Schedule execution failed ${schedule.id}:`, err?.message || err);
+      }
+    });
+
+    registeredTasks.set(schedule.id, task);
+  } catch (e) {
+    console.error("[schedules] registerSchedule error:", e);
+  }
+}
+
+async function refreshAllSchedulesOnStartup() {
+  const list = await readSchedules();
+  console.log(`[schedules] Found ${list.length} schedules on disk`);
+  for (const s of list) {
+    registerSchedule(s);
+  }
+}
+
+// REST endpoints for schedules
+app.get('/api/schedules', async (req, res) => {
+  const list = await readSchedules();
+  res.json(list);
+});
+
+app.get('/api/schedules/:id', async (req, res) => {
+  const id = req.params.id;
+  const list = await readSchedules();
+  const found = list.find((x) => x.id === id);
+  if (!found) return res.status(404).json({ error: 'Schedule not found' });
+  res.json(found);
+});
+
+app.post('/api/schedules', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const list = await readSchedules();
+    const id = (Date.now().toString(36) + Math.random().toString(36).slice(2,8)).toUpperCase();
+    const now = new Date().toISOString();
+    const schedule = {
+      id,
+      name: body.name || 'Schedule',
+      frequency: body.frequency || 'daily',
+      dayOfWeek: body.dayOfWeek ?? null,
+      dayOfMonth: body.dayOfMonth ?? null,
+      hour: body.hour ?? 0,
+      minute: body.minute ?? 0,
+      isEnabled: body.isEnabled !== undefined ? body.isEnabled : true,
+      enabledAt: body.enabledAt ? new Date(body.enabledAt).toISOString() : now,
+      coreKeywords: body.coreKeywords || [],
+      searchConfig: body.searchConfig || null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    list.push(schedule);
+    await writeSchedules(list);
+
+    // register
+    registerSchedule(schedule);
+
+    res.status(201).json(schedule);
+  } catch (err) {
+    console.error('[schedules] create error', err);
+    res.status(500).json({ error: 'Failed to create schedule' });
+  }
+});
+
+app.patch('/api/schedules/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    const list = await readSchedules();
+    const idx = list.findIndex((x) => x.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Schedule not found' });
+    const cur = list[idx];
+    const updated = { ...cur, ...body, updatedAt: new Date().toISOString() };
+    if (body.enabledAt) updated.enabledAt = new Date(body.enabledAt).toISOString();
+    list[idx] = updated;
+    await writeSchedules(list);
+
+    // refresh registration
+    unregisterSchedule(id);
+    registerSchedule(updated);
+
+    res.json(updated);
+  } catch (err) {
+    console.error('[schedules] patch error', err);
+    res.status(500).json({ error: 'Failed to update schedule' });
+  }
+});
+
+app.delete('/api/schedules/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const list = await readSchedules();
+    const newList = list.filter((x) => x.id !== id);
+    if (newList.length === list.length) return res.status(404).json({ error: 'Schedule not found' });
+    await writeSchedules(newList);
+    unregisterSchedule(id);
+    res.status(204).send();
+  } catch (err) {
+    console.error('[schedules] delete error', err);
+    res.status(500).json({ error: 'Failed to delete schedule' });
+  }
+});
+
+// load and register existing schedules on startup
+refreshAllSchedulesOnStartup().catch((e)=>console.error('[schedules] startup load error', e));
 
 // ==============================
 // 1) 用 Gemini 產生長尾關鍵字

@@ -299,13 +299,28 @@ export async function registerRoutes(
 
   app.post("/api/schedules", async (req, res) => {
     try {
+      console.log("[routes] POST /api/schedules body:", req.body);
+      // Convert enabledAt if it's sent as an ISO string from the client
+      if (req.body && typeof req.body.enabledAt === "string") {
+        try {
+          req.body.enabledAt = new Date(req.body.enabledAt);
+        } catch (e) {
+          // leave as-is; zod will validate later
+        }
+      }
+
       const validated = insertScheduleSchema.parse(req.body);
       const schedule = await storage.createSchedule(validated);
-      
-      // 新建排程後自動註冊到排程引擎
-      registerSchedule(schedule);
-      
-      res.status(201).json(schedule);
+
+      // 重新從 DB 讀回以取得 drizzle 的標準回傳結構
+      const saved = await storage.getSchedule(schedule.id);
+
+      console.log("[routes] created schedule (db):", saved);
+
+      // 新建排程後自動註冊到排程引擎（使用 DB 回傳的物件）
+      if (saved) registerSchedule(saved);
+
+      res.status(201).json(saved || schedule);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid schedule data", details: error.errors });
@@ -317,16 +332,31 @@ export async function registerRoutes(
 
   app.patch("/api/schedules/:id", async (req, res) => {
     try {
+      console.log("[routes] PATCH /api/schedules/:id body:", req.params.id, req.body);
+      // Convert enabledAt if it's sent as an ISO string from the client
+      if (req.body && typeof req.body.enabledAt === "string") {
+        try {
+          req.body.enabledAt = new Date(req.body.enabledAt);
+        } catch (e) {
+          // noop
+        }
+      }
+
       const validated = insertScheduleSchema.partial().parse(req.body);
       const schedule = await storage.updateSchedule(req.params.id, validated);
       if (!schedule) {
         return res.status(404).json({ error: "Schedule not found" });
       }
-      
-      // 更新後刷新排程註冊
-      refreshSchedule(schedule);
-      
-      res.json(schedule);
+
+      // 從 DB 重新讀取最新物件
+      const refreshed = await storage.getSchedule(schedule.id);
+
+      console.log("[routes] updated schedule (db):", refreshed);
+
+      // 更新後刷新排程註冊（使用 DB 回傳的物件）
+      if (refreshed) refreshSchedule(refreshed);
+
+      res.json(refreshed || schedule);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid schedule data", details: error.errors });

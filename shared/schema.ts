@@ -23,6 +23,11 @@ export const searchConfigs = pgTable("search_configs", {
     requireImages: boolean;
     negativeKeywords: string[];
   }>().notNull(),
+  // 信件模板設定
+  emailTemplate: jsonb("email_template").$type<{
+    subject: string;
+    body: string;
+  }>().notNull().default({ subject: "[預設主旨]", body: "[預設信件內容]" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -776,10 +776,7 @@ export default function SearchPage() {
               </div>
             </CardContent>
             <CardFooter className="flex justify-end gap-3 border-t px-6 py-4 bg-muted/20">
-              <Button variant="outline" onClick={handleSaveConfig}>
-                <Save className="w-4 h-4 mr-1" />
-                儲存並排程
-              </Button>
+
             </CardFooter>
           </Card>
         </div>

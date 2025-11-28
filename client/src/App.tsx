@@ -11,6 +11,7 @@ import ResultsPage from "@/pages/Results";
 import ReviewPage from "@/pages/Review";
 import CollaborationPage from "@/pages/Collaboration";
 import ScheduleManager from "@/pages/ScheduleManager";
+import SettingsPage from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -23,6 +24,7 @@ function Router() {
         <Route path="/review" component={ReviewPage} />
         <Route path="/collaboration" component={CollaborationPage} />
         <Route path="/analytics" component={ScheduleManager} />
+        <Route path="/settings" component={SettingsPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
