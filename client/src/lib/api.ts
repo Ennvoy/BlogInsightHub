@@ -11,8 +11,10 @@ import type {
   InsertSchedule
 } from "@shared/schema";
 
-// 後端 server.js 的位置
-const API_BASE = "http://127.0.0.1:5001/api";
+// 🔁 後端 API 基底網址：優先用 Vercel/環境變數，不然就退回本機
+const API_BASE = `${
+  import.meta.env.VITE_API_URL ?? "http://127.0.0.1:5001"
+}/api`;
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
