@@ -11,7 +11,8 @@
       longTailKeywords: [],
     };
 
-    const res = await fetch('http://127.0.0.1:5001/api/search/test', {
+    const API_BASE = process.env.API_BASE_URL || 'http://127.0.0.1:5001';
+    const res = await fetch(`${API_BASE}/api/search/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

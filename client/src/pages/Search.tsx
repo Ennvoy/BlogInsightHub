@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Search as SearchIcon, Save, RefreshCw } from "lucide-react";
 import { createSchedule, getSettings } from "@/lib/api";
 
-const API_BASE = "http://127.0.0.1:5001";
+const API_BASE = (import.meta as any).env?.VITE_API_URL ?? "http://127.0.0.1:5001";
 
 function mapLangRegion(value: string) {
   switch (value) {
