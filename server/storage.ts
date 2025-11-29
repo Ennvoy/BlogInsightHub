@@ -257,7 +257,6 @@ export class DatabaseStorage implements IStorage {
     const results = await db.insert(schema.settings).values({
       id,
       serpResultsNum: 10,
-      serpPages: 1,
       createdAt: now,
       updatedAt: now,
     } as any).returning();
@@ -272,8 +271,7 @@ export class DatabaseStorage implements IStorage {
       const now = new Date();
       const insertData: any = {
         id,
-        serpResultsNum: Math.min(10, payload.serpResultsNum ?? 10),
-        serpPages: typeof payload.serpPages === "number" ? payload.serpPages : 1,
+        serpResultsNum: payload.serpResultsNum ?? 10,
         createdAt: now,
         updatedAt: now,
       };
@@ -283,8 +281,7 @@ export class DatabaseStorage implements IStorage {
 
     const existing = rows[0];
     const updateData: any = { updatedAt: new Date() };
-    if (typeof payload.serpResultsNum === "number") updateData.serpResultsNum = Math.min(10, payload.serpResultsNum);
-    if (typeof payload.serpPages === "number") updateData.serpPages = payload.serpPages;
+    if (typeof payload.serpResultsNum === "number") updateData.serpResultsNum = payload.serpResultsNum;
 
     const results = await db
       .update(schema.settings)

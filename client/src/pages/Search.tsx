@@ -852,7 +852,7 @@ export default function SearchPage() {
                 預估產出 (Preview)
               </CardTitle>
               <CardDescription className="text-sidebar-foreground/60">
-                基於當前設定的每日預估量
+                基於當前設定的每日預估量，如需增加搜尋筆數，請至【系統設定】調整每個關鍵字的搜尋結果數量。
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

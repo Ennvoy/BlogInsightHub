@@ -187,7 +187,7 @@ export async function getSettings() {
   return fetchJson<any>(`/settings`);
 }
 
-export async function updateSettings(payload: { serpResultsNum?: number; serpPages?: number }) {
+export async function updateSettings(payload: { serpResultsNum?: number }) {
   return fetchJson<any>(`/settings`, {
     method: "PUT",
     body: JSON.stringify(payload),

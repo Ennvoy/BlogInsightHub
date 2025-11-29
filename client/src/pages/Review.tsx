@@ -24,6 +24,22 @@ type ReviewDecisionInput = {
   notes?: string | null;
 };
 
+type BloggerLead = {
+  id: string;
+  domain?: string;
+  url?: string;
+  title?: string;
+  keywords?: string[];
+  snippet?: string | null;
+  serpRank?: number | string | null;
+  aiScore?: number | null;
+  aiAnalysis?: string | null;
+  contactEmail?: string | null;
+  activityStatus?: string | null;
+  lastUpdatedAt?: string | null;
+  bloggerName?: string | null;
+};
+
 export default function ReviewPage() {
   const queryClient = useQueryClient();
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -77,7 +93,7 @@ export default function ReviewPage() {
   }, []);
 
   // 只抓待審核的名單
-  const { data: allLeads = [], isLoading } = useQuery({
+  const { data: allLeads = [], isLoading } = useQuery<BloggerLead[]>({
     queryKey: ["blogger-leads", "pending_review"],
     queryFn: () => getBloggerLeads(100, "pending_review"),
   });

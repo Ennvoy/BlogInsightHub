@@ -251,8 +251,6 @@ app.post("/api/search/test", async (req, res) => {
       // 新增兩個條件
       requireEmail = false,
       avoidDuplicates = false,
-      // SerpAPI 分頁數（例如 3 -> start= num*1, num*2, num*3）
-      serpPages = 1,
       // 新增文字數與流量篩選
       minWords = 0,
       maxTrafficRank = 0,
@@ -263,15 +261,13 @@ app.post("/api/search/test", async (req, res) => {
         ? longTailKeywords
         : coreKeywords;
 
-    // 用系統設定來決定每次 SerpAPI 要抓取的結果數量與分頁
+    // 用系統設定來決定每次 SerpAPI 要抓取的結果數量
     let serpNum = 10;
-    let serpPagesFromSettings = 1;
     try {
       const s = await storage.getSettings();
       if (s && typeof (s as any).serpResultsNum === "number") serpNum = (s as any).serpResultsNum;
-      if (s && typeof (s as any).serpPages === "number") serpPagesFromSettings = (s as any).serpPages;
     } catch (e) {
-      console.warn("無法載入 settings，使用預設 serp num=10, pages=1", e);
+      console.warn("無法載入 settings，使用預設 serp num=10", e);
     }
 
     const paramsBase = {
@@ -296,37 +292,40 @@ app.post("/api/search/test", async (req, res) => {
     for (const kw of keywordsToUse) {
       if (!kw) continue;
 
-      // 根據 serpPages 做多次請求並合併結果
-      // 若 request body 沒有提供 serpPages，使用系統設定值
-      const serpPagesToUse = Number(serpPages || serpPagesFromSettings || 1);
-      console.log(`[search/test] 使用 serp num = ${paramsBase.num}，pages = ${serpPagesToUse}，關鍵字查詢: ${kw}`);
-      const aggregatedResults: any[] = [];
-      const seenUrls = new Set<string>();
-      let serpRequestsMade = 0;
-      for (let p = 0; p < serpPagesToUse; p++) {
-        const start = paramsBase.num * (p + 1); // user requested starts like num*1,num*2,...
+      // 根據系統設定的 serpNum，分多頁向 SerpAPI 發出請求（start 每頁遞增 10）
+      const pages = Math.max(1, Math.ceil((paramsBase.num || 10) / 10));
+      const originalResults: any[] = [];
+      let totalResultsForKeyword: number | null = null;
+
+      for (let p = 0; p < pages; p++) {
+        // 每次分頁都算一次 SerpAPI 呼叫
+        usageStats.serpapi.calls += 1;
+        touchUsageUpdated();
+        const start = p * 10;
+        console.log(`[search/test] 使用 serp num = ${paramsBase.num} start=${start} 進行關鍵字查詢: ${kw}`);
+
         try {
           const { data } = await axios.get("https://serpapi.com/search", {
             params: { ...paramsBase, q: kw, start },
           });
-          serpRequestsMade += 1;
-          usageStats.serpapi.calls += 1;
-          touchUsageUpdated();
+
+          if (data.search_information && typeof data.search_information.total_results === 'number') {
+            totalResultsForKeyword = data.search_information.total_results;
+          }
 
           const pageResults: any[] = data.organic_results || [];
-          for (const it of pageResults) {
-            const url = (it.link || "").toLowerCase();
-            if (!url) continue;
-            if (seenUrls.has(url)) continue;
-            seenUrls.add(url);
-            aggregatedResults.push(it);
+          for (const r of pageResults) {
+            const link = r.link || "";
+            if (!link) continue;
+            // 簡單去重（同一 URL 只保留第一次出現）
+            if (!originalResults.some((ex) => (ex.link || "") === link)) {
+              originalResults.push(r);
+            }
           }
         } catch (e) {
-          console.warn(`[search/test] SerpAPI page request failed for start=${start}:`, getErrorDetail(e));
+          console.warn(`[search/test] SerpAPI page fetch failed for start=${start}, kw=${kw}:`, getErrorDetail(e));
         }
       }
-
-      const originalResults: any[] = aggregatedResults;
 
       // 逐一檢查每一筆，並保留被過濾的理由（filteredDetails）
       const candidates: Array<{
@@ -398,10 +397,8 @@ app.post("/api/search/test", async (req, res) => {
           reasons.push("duplicate_domain");
         }
 
-        // 若目前沒有任何理由則視為暫時通過（minWords 仍在寫入前檢查）
-        if (!reasons.includes("duplicate_domain") && !existingDomains.has(domainKey)) {
-          existingDomains.add(domainKey);
-        }
+        // 注意：避免重複網域僅比對歷史資料（existingDomains 由 DB 初始化），
+        // 不在同一次搜尋中新增 domain，讓同一批次內的多個結果不會互相阻擋。
 
         candidates.push({ item, domain, filteredDetails: reasons, contactEmail });
       }
@@ -492,12 +489,11 @@ app.post("/api/search/test", async (req, res) => {
 
       allResults.push({
         keyword: kw,
-        total_results: null,
+        total_results: totalResultsForKeyword,
         returned_results_count: originalResults.length,
         passed_count: deduped.length,
         results: resultsForResponse,
         savedLeadCount: savedLeads.length,
-        serpRequestsMade,
       });
     }
 
