@@ -218,6 +218,7 @@ export default function SearchPage() {
 
   const [isTesting, setIsTesting] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [testResponse, setTestResponse] = useState<any | null>(null);
 
   // API usage
   const [usage, setUsage] = useState<UsageResponse | null>(null);
@@ -447,8 +448,9 @@ export default function SearchPage() {
       const data = await res.json();
       console.log("測試抓取結果", data);
 
-      // 可有可無：僅保留 log / debug 用
+      // 保存並顯示回傳結果以便 Debug：包含每筆 filteredDetails、returned_results_count、serpNumUsed
       localStorage.setItem("searchTestResults", JSON.stringify(data));
+      setTestResponse(data);
 
       // ✅ 測試抓取成功後重新抓 usage（SerpAPI 用量）
       fetchUsage();
@@ -920,6 +922,14 @@ export default function SearchPage() {
             {testError && (
               <p className="text-xs text-red-400 px-6 pb-4">{testError}</p>
             )}
+              {testResponse && (
+                <div className="px-6 pb-4">
+                  <div className="text-sm font-medium mb-2">測試回傳（debug）</div>
+                  <pre className="max-h-60 overflow-auto text-xs bg-slate-900 text-white p-3 rounded">
+                    {JSON.stringify(testResponse, null, 2)}
+                  </pre>
+                </div>
+              )}
           </Card>
 
           {/* API 配額使用（真實數字） */}

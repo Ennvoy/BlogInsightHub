@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { loadTemplates, saveTemplates, DEFAULT_TEMPLATES } from "@/lib/templates";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Edit2 } from "lucide-react";
+import { Trash2, Plus, Edit2, Save } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +44,7 @@ export default function SettingsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const [serpResultsNum, setSerpResultsNum] = useState<number | "">("");
+  const [serpPages, setSerpPages] = useState<number | "">(1);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -97,6 +98,7 @@ export default function SettingsPage() {
       .then((s) => {
         if (!mounted) return;
         if (s && typeof s.serpResultsNum === "number") setSerpResultsNum(s.serpResultsNum);
+        if (s && typeof s.serpPages === "number") setSerpPages(s.serpPages);
       })
       .catch(() => {})
       .finally(() => mounted && setLoadingSettings(false));
@@ -247,30 +249,20 @@ export default function SettingsPage() {
 
       {/* 其他設定區塊（預留） */}
       <Card>
-        <CardHeader>
-          <CardTitle>其他設定</CardTitle>
-          <CardDescription>更多系統設置將在此新增</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <Label>Serp 搜尋每次抓取筆數</Label>
-                <p className="text-xs text-muted-foreground">設定每次向 SerpAPI 查詢時要回傳的結果數量 (1-100)</p>
+          <CardHeader>
+            <div className="flex justify-between items-start">
+              <div>
+                <CardTitle>搜尋設定</CardTitle>
+                <CardDescription>每次搜尋的數量，設定越高api消耗越快</CardDescription>
               </div>
-              <div className="w-48 flex items-center gap-2">
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={serpResultsNum}
-                  onChange={(e) => setSerpResultsNum(e.target.value === "" ? "" : Number(e.target.value))}
-                />
+              <div>
                 <Button
                   onClick={async () => {
                     try {
                       setSavingSettings(true);
-                      await updateSettings({ serpResultsNum: typeof serpResultsNum === 'number' ? serpResultsNum : 10 });
+                      const num = typeof serpResultsNum === 'number' ? serpResultsNum : 10;
+                      const pagesToSave = num < 10 ? 1 : (typeof serpPages === 'number' ? serpPages : 1);
+                      await updateSettings({ serpResultsNum: num, serpPages: pagesToSave });
                       alert("設定已儲存");
                     } catch (e) {
                       console.error(e);
@@ -279,14 +271,72 @@ export default function SettingsPage() {
                       setSavingSettings(false);
                     }
                   }}
+                  className="gap-2 h-9 px-3"
                   disabled={loadingSettings || savingSettings}
                 >
-                  儲存
+                  <Save className="w-4 h-4" />
+                儲存設定
                 </Button>
+              </div>
+            </div>
+          </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <Label>Serp 搜尋每次抓取筆數</Label>
+                <p className="text-xs text-muted-foreground">設定每次向 SerpAPI 查詢時要回傳的結果數量 (1-10，系統會限制上限)</p>
+              </div>
+              <div className="w-48 flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={serpResultsNum}
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Number(e.target.value);
+                    setSerpResultsNum(v);
+                    // 若抓取筆數小於 10，UI 上也同步將分頁參數設為 1
+                    if (typeof v === "number" && v < 10) {
+                      setSerpPages(1);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <Label>Serp 頁數 (分頁次數)</Label>
+                <p className="text-xs text-muted-foreground">設定向 SerpAPI 發出幾頁的查詢（例如 3 代表會用 start=num*1,num*2,num*3）</p>
+              </div>
+              <div className="w-48 flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={serpPages}
+                  onChange={(e) => setSerpPages(e.target.value === "" ? "" : Number(e.target.value))}
+                  disabled={typeof serpResultsNum === "number" && serpResultsNum < 10}
+                />
               </div>
             </div>
           </div>
         </CardContent>
+        
+      </Card>
+      <Card>
+          <CardHeader>
+            <div className="flex justify-between items-start">
+              <div>
+                <CardTitle>其他設定</CardTitle>
+                <CardDescription>更多系統設置將在此新增</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+        <CardContent>
+        </CardContent>
+        
       </Card>
     </div>
   );

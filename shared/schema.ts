@@ -171,6 +171,7 @@ export type Schedule = typeof schedules.$inferSelect;
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   serpResultsNum: integer("serp_results_num").notNull().default(10),
+  serpPages: integer("serp_pages").notNull().default(1),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -67,11 +67,9 @@ async function hasEnoughImages(url: string, min = 3): Promise<boolean> {
 
     const $ = cheerio.load(html);
     const imgCount = $("img").length;
-    // console.log("圖片數:", imgCount, url);
     return imgCount >= min;
   } catch (err: unknown) {
     console.error("抓圖片失敗:", url, getErrorDetail(err));
-    // 抓不到就視為不符合（因為使用者有開「必須包含圖片」）
     return false;
   }
 }
@@ -253,6 +251,8 @@ app.post("/api/search/test", async (req, res) => {
       // 新增兩個條件
       requireEmail = false,
       avoidDuplicates = false,
+      // SerpAPI 分頁數（例如 3 -> start= num*1, num*2, num*3）
+      serpPages = 1,
       // 新增文字數與流量篩選
       minWords = 0,
       maxTrafficRank = 0,
@@ -263,13 +263,15 @@ app.post("/api/search/test", async (req, res) => {
         ? longTailKeywords
         : coreKeywords;
 
-    // 用系統設定來決定每次 SerpAPI 要抓取的結果數量
+    // 用系統設定來決定每次 SerpAPI 要抓取的結果數量與分頁
     let serpNum = 10;
+    let serpPagesFromSettings = 1;
     try {
       const s = await storage.getSettings();
       if (s && typeof (s as any).serpResultsNum === "number") serpNum = (s as any).serpResultsNum;
+      if (s && typeof (s as any).serpPages === "number") serpPagesFromSettings = (s as any).serpPages;
     } catch (e) {
-      console.warn("無法載入 settings，使用預設 serp num=10", e);
+      console.warn("無法載入 settings，使用預設 serp num=10, pages=1", e);
     }
 
     const paramsBase = {
@@ -294,69 +296,131 @@ app.post("/api/search/test", async (req, res) => {
     for (const kw of keywordsToUse) {
       if (!kw) continue;
 
-      // 統計 SerpAPI 呼叫次數
-      usageStats.serpapi.calls += 1;
-      touchUsageUpdated();
+      // 根據 serpPages 做多次請求並合併結果
+      // 若 request body 沒有提供 serpPages，使用系統設定值
+      const serpPagesToUse = Number(serpPages || serpPagesFromSettings || 1);
+      console.log(`[search/test] 使用 serp num = ${paramsBase.num}，pages = ${serpPagesToUse}，關鍵字查詢: ${kw}`);
+      const aggregatedResults: any[] = [];
+      const seenUrls = new Set<string>();
+      let serpRequestsMade = 0;
+      for (let p = 0; p < serpPagesToUse; p++) {
+        const start = paramsBase.num * (p + 1); // user requested starts like num*1,num*2,...
+        try {
+          const { data } = await axios.get("https://serpapi.com/search", {
+            params: { ...paramsBase, q: kw, start },
+          });
+          serpRequestsMade += 1;
+          usageStats.serpapi.calls += 1;
+          touchUsageUpdated();
 
-      const { data } = await axios.get("https://serpapi.com/search", {
-        params: { ...paramsBase, q: kw },
-      });
-
-      // 第一次過濾：政府 / 學術 / 負面關鍵字
-      const baseFiltered = (data.organic_results || []).filter((item: any) => {
-        const title = (item.title || "").toLowerCase();
-        const snippet = (item.snippet || "").toLowerCase();
-        const url = (item.link || "").toLowerCase();
-
-        if (excludeGovEdu && (url.includes(".gov") || url.includes(".edu"))) return false;
-
-        if (badWords.some((w) => w && (title.includes(w) || snippet.includes(w)))) return false;
-
-        return true;
-      });
-
-      // 圖片條件
-      let finalResults = baseFiltered;
-      if (mustContainImages) {
-        const tmp: any[] = [];
-        for (const item of baseFiltered) {
-          const url = item.link;
-          if (!url) continue;
-          const ok = await hasEnoughImages(url, 3);
-          if (ok) tmp.push(item);
+          const pageResults: any[] = data.organic_results || [];
+          for (const it of pageResults) {
+            const url = (it.link || "").toLowerCase();
+            if (!url) continue;
+            if (seenUrls.has(url)) continue;
+            seenUrls.add(url);
+            aggregatedResults.push(it);
+          }
+        } catch (e) {
+          console.warn(`[search/test] SerpAPI page request failed for start=${start}:`, getErrorDetail(e));
         }
-        finalResults = tmp.length > 0 ? tmp : baseFiltered;
       }
 
-      // Email + domain 去重
-      const deduped: any[] = [];
-      for (const item of finalResults) {
-        const url = item.link;
-        if (!url) continue;
+      const originalResults: any[] = aggregatedResults;
+
+      // 逐一檢查每一筆，並保留被過濾的理由（filteredDetails）
+      const candidates: Array<{
+        item: any;
+        domain: string;
+        filteredDetails: string[];
+        contactEmail?: string;
+      }> = [];
+
+      let imageOkCount = 0;
+
+      for (const item of originalResults) {
+        const title = (item.title || "").toLowerCase();
+        const snippet = (item.snippet || "").toLowerCase();
+        const url = (item.link || "");
+        if (!url) {
+          // skip empty urls but record reason
+          candidates.push({ item, domain: "", filteredDetails: ["no_url"] });
+          continue;
+        }
+
+        const reasons: string[] = [];
+        const lowerUrl = url.toLowerCase();
+
+        if (excludeGovEdu && (lowerUrl.includes(".gov") || lowerUrl.includes(".edu"))) {
+          reasons.push("exclude_gov_edu");
+        }
+
+        if (badWords.some((w) => w && (title.includes(w) || snippet.includes(w)))) {
+          reasons.push("negative_keyword");
+        }
+
+        // 圖片檢查（async）
+        let hasImages = true;
+        if (mustContainImages) {
+          try {
+            const ok = await hasEnoughImages(url, 3);
+            hasImages = ok;
+            if (!ok) {
+              reasons.push("not_enough_images");
+            } else {
+              imageOkCount += 1;
+            }
+          } catch (e) {
+            // 若檢查失敗，不視為直接排除，僅記 log
+            console.warn("圖片檢查失敗：", url, getErrorDetail(e));
+          }
+        }
 
         let domain = "";
-        try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch { domain = url; }
+        try {
+          domain = new URL(url).hostname.replace(/^www\./, "");
+        } catch {
+          domain = url;
+        }
         const domainKey = domain.toLowerCase();
 
-        // 需要 Email
         let contactEmail = "";
         if (requireEmail) {
           const email = await fetchEmailFromPage(url);
-          if (!email) continue;
-          contactEmail = email;
+          if (!email) {
+            reasons.push("missing_email");
+          } else {
+            contactEmail = email;
+          }
         }
 
-        // 注意：為了減少不必要的外部抓取，我們暫時不在此階段抓取字數。
-        // 會在即將寫入 DB 前（真正要儲存時）再抓字數並依 minWords 做最後過濾。
+        if (avoidDuplicates && existingDomains.has(domainKey)) {
+          reasons.push("duplicate_domain");
+        }
 
-        if (avoidDuplicates && existingDomains.has(domainKey)) continue;
-        existingDomains.add(domainKey);
+        // 若目前沒有任何理由則視為暫時通過（minWords 仍在寫入前檢查）
+        if (!reasons.includes("duplicate_domain") && !existingDomains.has(domainKey)) {
+          existingDomains.add(domainKey);
+        }
 
-        deduped.push({ ...item, domain, contactEmail });
+        candidates.push({ item, domain, filteredDetails: reasons, contactEmail });
       }
 
-      // 寫入 leads（呼叫 storage）
+      // 如果要求必須有圖片，但所有候選都沒有圖片，則恢復圖片條件（保留原有行為）
+      if (mustContainImages && imageOkCount === 0) {
+        for (const c of candidates) {
+          c.filteredDetails = c.filteredDetails.filter((r) => r !== "not_enough_images");
+        }
+      }
+
+      // 最終候選（尚未檢查 minWords）
+      const deduped = candidates.filter((c) => c.filteredDetails.length === 0).map((c) => ({ ...c.item, domain: c.domain, contactEmail: c.contactEmail }));
+
+      // 寫入 leads（呼叫 storage），在真正要寫入前才抓字數並以 minWords 做最後過濾
       const savedLeads: any[] = [];
+      // 為了能在回傳中顯示哪些 url 因為字數不足而被過濾，我們準備一個 map
+      const belowMinWordsUrls: Record<string, number | null> = {};
+
       for (let idx = 0; idx < deduped.length; idx++) {
         const item = deduped[idx];
         const link = item.link || "";
@@ -365,13 +429,13 @@ app.post("/api/search/test", async (req, res) => {
         const lastUpdatedAt = link ? await fetchLastUpdatedAt(link) : null;
         const activityStatus = classifyActivity(lastUpdatedAt);
 
-        // 在寫入前才抓字數（避免大量無必要請求）
         let wordCount: number | null = null;
         if (minWords && Number(minWords) > 0) {
           try {
             const wc = await fetchWordCount(link);
             if (wc === null || wc < Number(minWords)) {
-              // 不符合字數要求，跳過此筆寫入
+              // 記錄為字數不足並跳過寫入
+              belowMinWordsUrls[link] = wc;
               continue;
             }
             wordCount = wc;
@@ -392,7 +456,6 @@ app.post("/api/search/test", async (req, res) => {
           domainAuthority: null,
           serpRank: `#${idx + 1}`,
           contactEmail: item.contactEmail || "",
-          // 若有抓到字數，寫入 wordCount（對應 schema 的 word_count）
           wordCount: wordCount,
           aiAnalysis: "",
           status: "pending_review",
@@ -410,17 +473,49 @@ app.post("/api/search/test", async (req, res) => {
 
       totalSaved += savedLeads.length;
 
+      // 準備回傳資料：包含每個原始結果的 filteredDetails（包含字數不足的資訊）
+      const resultsForResponse = candidates.map((c) => {
+        const url = c.item.link || "";
+        const fd = [...c.filteredDetails];
+        if (belowMinWordsUrls[url] !== undefined) {
+          fd.push("below_min_words");
+        }
+        const status = fd.length === 0 ? "passed" : "filtered";
+        return {
+          title: c.item.title || "",
+          url,
+          domain: c.domain || "",
+          status,
+          reasons: fd,
+        };
+      });
+
       allResults.push({
         keyword: kw,
-        total_results: data.search_information?.total_results,
-        filtered_count: deduped.length,
-        results: deduped,
+        total_results: null,
+        returned_results_count: originalResults.length,
+        passed_count: deduped.length,
+        results: resultsForResponse,
         savedLeadCount: savedLeads.length,
+        serpRequestsMade,
       });
     }
 
-    console.log(`[search/test] 全部關鍵字共寫入 ${totalSaved} 筆 leads`);
-    return res.json({ ok: true, totalSaved, results: allResults });
+    // 計算跨所有 keyword 的總計資訊
+    const totalReturnedUrls = allResults.reduce((sum, r) => sum + (r.returned_results_count || 0), 0);
+    const totalPassed = allResults.reduce((sum, r) => sum + (r.passed_count || 0), 0);
+    const totalFiltered = totalReturnedUrls - totalPassed;
+
+    console.log(`[search/test] 全部關鍵字共寫入 ${totalSaved} 筆 leads (serpNum=${paramsBase.num})`);
+    return res.json({
+      ok: true,
+      totalSaved,
+      serpNumUsed: paramsBase.num,
+      totalReturnedUrls,
+      totalPassed,
+      totalFiltered,
+      results: allResults,
+    });
   } catch (err: unknown) {
     const detail = getErrorDetail(err);
     console.error("SerpAPI 測試搜尋失敗:", detail);
