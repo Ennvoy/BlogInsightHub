@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function ResultsPage() {
+  const [sortBy, setSortBy] = useState<"aiScore" | "createdAt">("aiScore");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -116,7 +117,15 @@ export default function ResultsPage() {
   }
 
   const sortedLeads = [...leads].sort((a, b) => {
-    const diff = (a.aiScore ?? 0) - (b.aiScore ?? 0);
+    if (sortBy === "aiScore") {
+      const diff = (a.aiScore ?? 0) - (b.aiScore ?? 0);
+      return sortOrder === "asc" ? diff : -diff;
+    }
+
+    // sortBy === 'createdAt'
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    const diff = ta - tb;
     return sortOrder === "asc" ? diff : -diff;
   });
 
@@ -225,6 +234,24 @@ export default function ResultsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-[360px]">標題 / 來源</TableHead>
+                      <TableHead className="w-[180px] text-sm">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={`-ml-3 h-8 text-sm ${sortBy === "createdAt" ? "font-medium" : ""}`}
+                          onClick={() => {
+                            if (sortBy === "createdAt") {
+                              setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+                            } else {
+                              setSortBy("createdAt");
+                              setSortOrder("desc");
+                            }
+                          }}
+                        >
+                          撈取時間
+                          <ArrowUpDown className="ml-2 h-4 w-4" />
+                        </Button>
+                      </TableHead>
                       <TableHead className="w-[120px] text-center">
                         <div className="flex items-center justify-center gap-1">
                           <TrendingUp className="w-3 h-3" />
@@ -260,9 +287,19 @@ export default function ResultsPage() {
                       >
                         <TableCell>
                           <div className="flex flex-col gap-1">
-                            <span className="font-medium line-clamp-1 hover:underline cursor-pointer">
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-medium line-clamp-1 hover:underline"
+                              onClick={() => {
+                                // 當使用者點標題時，同步把排序切回撈取時間（選擇性行為）
+                                // 但不強制改變排序行為；這裡不做變更，以保留使用者偏好
+                              }}
+                            >
                               {item.title}
-                            </span>
+                              <ExternalLink className="inline w-3 h-3 ml-2" />
+                            </a>
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
                                 <ExternalLink className="w-3 h-3" />
@@ -281,6 +318,10 @@ export default function ResultsPage() {
                               </div>
                             </div>
                           </div>
+                        </TableCell>
+
+                        <TableCell className="text-sm text-muted-foreground font-mono">
+                          {item.createdAt ? new Date(item.createdAt).toLocaleString() : "N/A"}
                         </TableCell>
 
                         <TableCell className="text-center">

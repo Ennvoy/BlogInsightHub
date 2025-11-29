@@ -23,6 +23,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/search", label: "搜尋條件 Input", icon: Search },
     { href: "/results", label: "搜尋結果 Results", icon: ListFilter },
     { href: "/review", label: "人工審核 Review", icon: CheckSquare },
+   // { href: "/collaboration", label: "合作追蹤 Collab", icon: Mail },
     { href: "/analytics", label: "排程管理 Schedule", icon: BarChart3 },
   ];
 
