@@ -3,6 +3,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import axios from "axios";
+// 忽略 cheerio 套件內部的型別檢查錯誤（編輯器在 node_modules 中顯示隱含 any 的錯誤）
+// @ts-ignore
 import * as cheerio from "cheerio"; // ✅ 用來解析 HTML 數圖片
 import { createServer } from "http";
 import path from "path";             // ✅ 新增：提供前端靜態檔案
@@ -105,7 +107,7 @@ async function fetchEmailFromPage(url: string): Promise<string | null> {
 // ==============
 // 工具：抓文章最近更新時間 + 活躍度
 // ==============
-function extractDateFromText($: cheerio.Root) {
+function extractDateFromText($: any) {
   const mainText = $(".entry-content").text() || $(".post-content").text() || $("article").text() || $("body").text();
   if (!mainText) return null;
   const match = mainText.match(/(20\d{2})[./-](0[1-9]|1[0-2])[./-](0[1-9]|[12]\d|3[01])/);
@@ -266,7 +268,7 @@ app.post("/api/search/test", async (req, res) => {
       num: 10,
     };
 
-    const badWords = (negativeKeywords || []).map((w: any) => String(w).toLowerCase());
+    const badWords: string[] = (negativeKeywords || []).map((w: any) => String(w).toLowerCase());
 
     const allResults: any[] = [];
     let totalSaved = 0;
