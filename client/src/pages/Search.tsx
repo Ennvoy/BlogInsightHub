@@ -22,7 +22,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Search as SearchIcon, Save, RefreshCw } from "lucide-react";
-import { createSchedule } from "@/lib/api";
+import { createSchedule, getSettings } from "@/lib/api";
 
 const API_BASE = "http://127.0.0.1:5001";
 
@@ -83,7 +83,7 @@ function clamp01(v: number) {
  * 預估產出計算器
  * 目前是「規則 + 估算」，之後你有真實數據再一起校正。
  */
-function estimatePreview(input: PreviewInput): PreviewResult {
+function estimatePreview(input: PreviewInput, resultsPerKeyword = 10): PreviewResult {
   const {
     coreKeywords,
     longTailKeywords,
@@ -107,9 +107,8 @@ function estimatePreview(input: PreviewInput): PreviewResult {
       ? longTailKeywords.length
       : coreList.length;
 
-  // 跟後端的 SerpAPI num 綁定：目前是 10
-  const RESULTS_PER_KEYWORD = 10;
-  const dailyUrls = keywordCount * RESULTS_PER_KEYWORD;
+  // 根據系統設定的每關鍵字抓取數量計算每日 URL 數
+  const dailyUrls = keywordCount * resultsPerKeyword;
 
   if (dailyUrls === 0) {
     return {
@@ -224,6 +223,23 @@ export default function SearchPage() {
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+
+  // 從系統設定讀取每個關鍵字要抓取的結果數（影響預估產出）
+  const [resultsPerKeyword, setResultsPerKeyword] = useState<number>(10);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    setSettingsLoading(true);
+    getSettings()
+      .then((s) => {
+        if (!mounted) return;
+        if (s && typeof s.serpResultsNum === "number") setResultsPerKeyword(s.serpResultsNum);
+      })
+      .catch((e) => console.warn("Failed to load settings:", e))
+      .finally(() => mounted && setSettingsLoading(false));
+    return () => { mounted = false };
+  }, []);
 
   // ==============================
   // 取得 API 使用量（可重複呼叫 → 即時更新用）
@@ -531,7 +547,8 @@ export default function SearchPage() {
   // ====== 預估產出（會隨設定即時變化） ======
   const preview = useMemo(
     () =>
-      estimatePreview({
+      estimatePreview(
+        {
         coreKeywords,
         longTailKeywords: generatedKeywords,
         longTailCount,
@@ -541,7 +558,9 @@ export default function SearchPage() {
         mustContainImages,
         requireEmail,
         avoidDuplicates,
-      }),
+        },
+        resultsPerKeyword
+      ),
     [
       coreKeywords,
       generatedKeywords,
@@ -552,6 +571,7 @@ export default function SearchPage() {
       mustContainImages,
       requireEmail,
       avoidDuplicates,
+      resultsPerKeyword,
     ]
   );
 
