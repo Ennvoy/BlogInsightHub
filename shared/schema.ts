@@ -44,6 +44,8 @@ export const bloggerLeads = pgTable("blogger_leads", {
   trafficEstimate: text("traffic_estimate"),
   domainAuthority: integer("domain_authority"),
   serpRank: text("serp_rank"),
+  // 文章字數：nullable（寫入時若可取得則填入）
+  wordCount: integer("word_count"),
   contactEmail: text("contact_email"),
   aiAnalysis: text("ai_analysis"),
   status: text("status").notNull().default('pending_review'), // pending_review, approved, rejected, auto_filtered

@@ -274,6 +274,7 @@ export default function ResultsPage() {
                         </Button>
                       </TableHead>
                       <TableHead>流量預估</TableHead>
+                      <TableHead>字數</TableHead>
                       <TableHead>狀態</TableHead>
                       <TableHead className="text-right">操作</TableHead>
                     </TableRow>
@@ -361,6 +362,12 @@ export default function ResultsPage() {
 
                         <TableCell className="font-mono text-xs">
                           {item.trafficEstimate || "N/A"}
+                        </TableCell>
+
+                        <TableCell className="font-mono text-xs text-center">
+                          {typeof item.wordCount === "number" && item.wordCount > 0
+                            ? item.wordCount.toLocaleString()
+                            : "N/A"}
                         </TableCell>
 
                         <TableCell>

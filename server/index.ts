@@ -253,6 +253,9 @@ app.post("/api/search/test", async (req, res) => {
       // 新增兩個條件
       requireEmail = false,
       avoidDuplicates = false,
+      // 新增文字數與流量篩選
+      minWords = 0,
+      maxTrafficRank = 0,
     } = config;
 
     const keywordsToUse =
@@ -343,6 +346,9 @@ app.post("/api/search/test", async (req, res) => {
           contactEmail = email;
         }
 
+        // 注意：為了減少不必要的外部抓取，我們暫時不在此階段抓取字數。
+        // 會在即將寫入 DB 前（真正要儲存時）再抓字數並依 minWords 做最後過濾。
+
         if (avoidDuplicates && existingDomains.has(domainKey)) continue;
         existingDomains.add(domainKey);
 
@@ -359,6 +365,22 @@ app.post("/api/search/test", async (req, res) => {
         const lastUpdatedAt = link ? await fetchLastUpdatedAt(link) : null;
         const activityStatus = classifyActivity(lastUpdatedAt);
 
+        // 在寫入前才抓字數（避免大量無必要請求）
+        let wordCount: number | null = null;
+        if (minWords && Number(minWords) > 0) {
+          try {
+            const wc = await fetchWordCount(link);
+            if (wc === null || wc < Number(minWords)) {
+              // 不符合字數要求，跳過此筆寫入
+              continue;
+            }
+            wordCount = wc;
+          } catch (e) {
+            console.warn("抓字數時發生錯誤，略過此筆：", link, e);
+            continue;
+          }
+        }
+
         const insert = {
           title: item.title || "(無標題)",
           url: link,
@@ -370,6 +392,8 @@ app.post("/api/search/test", async (req, res) => {
           domainAuthority: null,
           serpRank: `#${idx + 1}`,
           contactEmail: item.contactEmail || "",
+          // 若有抓到字數，寫入 wordCount（對應 schema 的 word_count）
+          wordCount: wordCount,
           aiAnalysis: "",
           status: "pending_review",
           lastUpdatedAt,
@@ -429,6 +453,32 @@ const usageStats = {
 
 function touchUsageUpdated() {
   usageStats.lastUpdatedAt = new Date().toISOString();
+}
+
+// ==============
+// 工具：抓取文章字數（以文字數計）
+// ==============
+async function fetchWordCount(url: string): Promise<number | null> {
+  try {
+    const { data: html } = await axios.get(url, {
+      timeout: 8000,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const $ = cheerio.load(html);
+    const mainText = $(".entry-content").text() || $(".post-content").text() || $("article").text() || $("body").text();
+    if (!mainText) return null;
+    const normalized = String(mainText).replace(/\s+/g, " ").trim();
+    if (!normalized) return 0;
+    const words = normalized.split(/\s+/).filter(Boolean).length;
+    return words;
+  } catch (err: unknown) {
+    console.error("抓字數失敗:", url, getErrorDetail(err));
+    return null;
+  }
 }
 
 // SerpAPI 帳號資訊快取（避免每次 /api/usage 都打外部 API）
