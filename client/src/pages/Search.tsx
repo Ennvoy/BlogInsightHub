@@ -177,7 +177,7 @@ export default function SearchPage() {
   const [langRegion, setLangRegion] = useState("zh-tw");
 
   const [coreKeywords, setCoreKeywords] = useState(
-    "台北 美食 推薦\n台中 餐廳 2025\n高雄 必吃\n台南 小吃 排隊"
+    "台南 小吃 排隊"
   );
 
   // 長尾關鍵字
@@ -187,7 +187,7 @@ export default function SearchPage() {
   const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Level 2 Filter
-  const [minWords, setMinWords] = useState(800);
+  const [minWords, setMinWords] = useState(200);
   const [maxTrafficRank, setMaxTrafficRank] = useState(5_000_000);
   const [excludeGovEdu, setExcludeGovEdu] = useState(true);
   const [mustContainImages, setMustContainImages] = useState(true);
@@ -639,7 +639,7 @@ export default function SearchPage() {
 
               {/* 核心關鍵字 + 長尾控制 */}
               <div className="space-y-2">
-                <Label>核心關鍵字 (每行一個)</Label>
+                <Label>核心關鍵字 (每行一個，每個消耗一次搜尋次數)</Label>
                 <Textarea
                   value={coreKeywords}
                   onChange={(e) => setCoreKeywords(e.target.value)}
@@ -649,7 +649,7 @@ export default function SearchPage() {
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span>
-                      系統會依據核心關鍵字，利用 AI 產生建議的長尾關鍵字。
+                      系統會依據核心關鍵字，利用 AI 產生建議的長尾關鍵字，每個長尾關鍵字搜尋會消耗一次搜尋次數。
                     </span>
                     <div className="flex items-center gap-1">
                       <span>產生數量（每個核心關鍵字）</span>
