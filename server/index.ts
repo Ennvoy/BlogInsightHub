@@ -247,6 +247,71 @@ app.post("/api/search/test", async (req, res) => {
 // ==============================
 // 啟動伺服器
 // ==============================
+// ==============================
+// API 使用量統計（暫存在記憶體；伺服器重啟會歸零）
+// ==============================
+const usageStats = {
+  startedAt: new Date().toISOString(),
+  lastUpdatedAt: null as string | null,
+  gemini: {
+    calls: 0,
+    promptTokens: 0,
+    candidateTokens: 0,
+    totalTokens: 0,
+  },
+  serpapi: {
+    calls: 0,
+  },
+};
+
+function touchUsageUpdated() {
+  usageStats.lastUpdatedAt = new Date().toISOString();
+}
+
+// SerpAPI 帳號資訊快取（避免每次 /api/usage 都打外部 API）
+let serpapiAccountCache: { fetchedAt: number; data: any | null } = {
+  fetchedAt: 0,
+  data: null,
+};
+
+async function fetchSerpApiAccountInfo() {
+  if (!SERP_API_KEY) return null;
+  try {
+    const { data } = await axios.get("https://serpapi.com/account", {
+      params: { api_key: SERP_API_KEY },
+    });
+    serpapiAccountCache = { fetchedAt: Date.now(), data };
+    return data;
+  } catch (e: any) {
+    console.error("取得 SerpAPI 帳號資訊失敗:", e?.response?.data || e?.message || e);
+    return null;
+  }
+}
+
+// 取得 API 使用量（含 SerpAPI 真實方案資訊）
+app.get("/api/usage", async (req, res) => {
+  const now = Date.now();
+  if (!serpapiAccountCache.data || now - serpapiAccountCache.fetchedAt > 60_000) {
+    await fetchSerpApiAccountInfo();
+  }
+
+  const acc = serpapiAccountCache.data;
+
+  const serpapiInfo = {
+    calls: usageStats.serpapi.calls,
+    planMonthlyLimit: acc?.searches_per_month ?? null,
+    thisMonthUsage: acc?.this_month_usage ?? null,
+    totalSearchesLeft: acc?.total_searches_left ?? null,
+  };
+
+  touchUsageUpdated();
+
+  return res.json({
+    ...usageStats,
+    serpapi: serpapiInfo,
+  });
+});
+
 const httpServer = createServer(app);
 
 // ✅ 在 listen 前先註冊所有路由 + 加上前端靜態檔案（production）
