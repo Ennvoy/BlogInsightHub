@@ -238,7 +238,7 @@ export default function ScheduleManager() {
                         schedule.dayOfMonth
                       )}
                     </TableCell>
-                    <TableCell>{String(schedule.hour).padStart(2, "0")}:00</TableCell>
+                    <TableCell>{String(schedule.hour).padStart(2, "0")}:{String(schedule.minute ?? 0).padStart(2, "0")}</TableCell>
                     <TableCell>
                       <Badge variant={schedule.isEnabled ? "default" : "secondary"}>
                         {schedule.isEnabled ? "啟用" : "停用"}
@@ -465,21 +465,39 @@ export default function ScheduleManager() {
 
                 <div className="space-y-2">
                   <Label>執行時間</Label>
-                  <Select
-                    value={String(formData.hour || 9)}
-                    onValueChange={(v) => setFormData({ ...formData, hour: Number(v) })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: 24 }, (_, i) => i).map((h) => (
-                        <SelectItem key={h} value={String(h)}>
-                          {String(h).padStart(2, "0")}:00
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex gap-2">
+                    <Select
+                      value={String(formData.hour ?? 9)}
+                      onValueChange={(v) => setFormData({ ...formData, hour: Number(v) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                          <SelectItem key={h} value={String(h)}>
+                            {String(h).padStart(2, "0")}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={String(formData.minute ?? 0)}
+                      onValueChange={(v) => setFormData({ ...formData, minute: Number(v) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 60 }, (_, i) => i).map((m) => (
+                          <SelectItem key={m} value={String(m)}>
+                            {String(m).padStart(2, "0")}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
 

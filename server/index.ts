@@ -8,8 +8,17 @@ import { createServer } from "http";
 import path from "path";             // ✅ 新增：提供前端靜態檔案
 import { initializeScheduler } from "./scheduler"; // ✅ 導入排程引擎
 import { registerRoutes } from "./routes";         // ✅ 導入路由
+import { storage } from "./storage";               // ✅ 資料存取（drizzle）
 
 const app = express();
+
+// 未捕捉的例外與 rejection 記錄，協助診斷為何進程會在啟動後退出
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err && (err as any).stack ? (err as any).stack : err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled Rejection:", reason);
+});
 
 // === 健康檢查：之後用這個路徑測後端狀態 ===
 app.get("/api/health", (req, res) => {
@@ -63,6 +72,93 @@ async function hasEnoughImages(url: string, min = 3): Promise<boolean> {
     // 抓不到就視為不符合（因為使用者有開「必須包含圖片」）
     return false;
   }
+}
+
+// ==============
+// 工具：從 HTML 抓 Email
+// ==============
+const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/g;
+
+function extractFirstEmailFromHtml(html: string | null): string | null {
+  if (!html) return null;
+  const matches = html.match(EMAIL_REGEX);
+  if (!matches || matches.length === 0) return null;
+  return matches[0];
+}
+
+async function fetchEmailFromPage(url: string): Promise<string | null> {
+  try {
+    const { data: html } = await axios.get(url, {
+      timeout: 8000,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    return extractFirstEmailFromHtml(html);
+  } catch (err: unknown) {
+    console.error("抓 Email 失敗:", url, getErrorDetail(err));
+    return null;
+  }
+}
+
+// ==============
+// 工具：抓文章最近更新時間 + 活躍度
+// ==============
+function extractDateFromText($: cheerio.Root) {
+  const mainText = $(".entry-content").text() || $(".post-content").text() || $("article").text() || $("body").text();
+  if (!mainText) return null;
+  const match = mainText.match(/(20\d{2})[./-](0[1-9]|1[0-2])[./-](0[1-9]|[12]\d|3[01])/);
+  return match ? match[0] : null;
+}
+
+async function fetchLastUpdatedAt(url: string): Promise<string | null> {
+  try {
+    const { data: html } = await axios.get(url, {
+      timeout: 8000,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+
+    const $ = cheerio.load(html);
+
+    const meta =
+      $('meta[property="article:modified_time"]').attr("content") ||
+      $('meta[property="article:published_time"]').attr("content") ||
+      $('meta[property="og:updated_time"]').attr("content") ||
+      $('meta[name="lastmod"]').attr("content") ||
+      $('meta[name="pubdate"]').attr("content") ||
+      $("time[datetime]").attr("datetime") ||
+      null;
+
+    let candidate = meta;
+    if (!candidate) {
+      const fromText = extractDateFromText($);
+      candidate = fromText || null;
+    }
+
+    if (!candidate) return null;
+    const trimmed = String(candidate).trim();
+    if (!trimmed) return null;
+    const d = new Date(trimmed);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  } catch (err: unknown) {
+    console.error("抓更新日期失敗:", url, getErrorDetail(err));
+    return null;
+  }
+}
+
+function classifyActivity(dateStr: string | null) {
+  if (!dateStr) return "Unknown";
+  const t = new Date(dateStr).getTime();
+  if (Number.isNaN(t)) return "Unknown";
+  const diffDays = (Date.now() - t) / (1000 * 60 * 60 * 24);
+  if (diffDays <= 30) return "Active";
+  if (diffDays <= 180) return "Normal";
+  return "Old";
 }
 
 // ==============================
@@ -152,10 +248,16 @@ app.post("/api/search/test", async (req, res) => {
       negativeKeywords = [],
       excludeGovEdu = true,
       mustContainImages = true,
-      // minWords, maxTrafficRank 目前只記錄，真正要比對需再串 SimilarWeb / 文章長度
+      // 新增兩個條件
+      requireEmail = false,
+      avoidDuplicates = false,
     } = config;
 
-    const allKeywords = [...coreKeywords, ...longTailKeywords];
+    const keywordsToUse =
+      Array.isArray(longTailKeywords) && longTailKeywords.length > 0
+        ? longTailKeywords
+        : coreKeywords;
+
     const paramsBase = {
       engine: "google",
       api_key: SERP_API_KEY,
@@ -164,76 +266,126 @@ app.post("/api/search/test", async (req, res) => {
       num: 10,
     };
 
-    const badWords = (negativeKeywords || []).map((w: string) =>
-      String(w).toLowerCase()
-    );
+    const badWords = (negativeKeywords || []).map((w: any) => String(w).toLowerCase());
 
     const allResults: any[] = [];
+    let totalSaved = 0;
 
-    for (const kw of allKeywords) {
+    // 先讀取現有 leads，用來做跨批次去重
+    const existingLeads = await storage.getBloggerLeads(1000);
+    const existingDomains = new Set(
+      existingLeads.map((l) => (l.domain || "").toLowerCase()).filter(Boolean)
+    );
+
+    for (const kw of keywordsToUse) {
       if (!kw) continue;
+
+      // 統計 SerpAPI 呼叫次數
+      usageStats.serpapi.calls += 1;
+      touchUsageUpdated();
 
       const { data } = await axios.get("https://serpapi.com/search", {
         params: { ...paramsBase, q: kw },
       });
 
-      // -------- 第 1 階段：政府/學術 + 負面關鍵字過濾 --------
+      // 第一次過濾：政府 / 學術 / 負面關鍵字
       const baseFiltered = (data.organic_results || []).filter((item: any) => {
         const title = (item.title || "").toLowerCase();
         const snippet = (item.snippet || "").toLowerCase();
         const url = (item.link || "").toLowerCase();
 
-        // 排除政府 / 學術網域
-        if (excludeGovEdu && (url.includes(".gov") || url.includes(".edu"))) {
-          console.log("排除政府/學術網域:", url);
-          return false;
-        }
+        if (excludeGovEdu && (url.includes(".gov") || url.includes(".edu"))) return false;
 
-        // 排除關鍵字
-        if (
-          badWords.some(
-            (w: any) =>
-              w && (title.includes(String(w)) || snippet.includes(String(w)))
-          )
-        ) {
-          console.log("排除負面關鍵字:", kw, "→", title || snippet);
-          return false;
-        }
+        if (badWords.some((w) => w && (title.includes(w) || snippet.includes(w)))) return false;
 
         return true;
       });
 
+      // 圖片條件
       let finalResults = baseFiltered;
-
-      // -------- 第 2 階段：必須包含圖片（抓 HTML 算 <img>） --------
       if (mustContainImages) {
-        console.log("啟用圖片數量過濾（至少 3 張）");
         const tmp: any[] = [];
         for (const item of baseFiltered) {
           const url = item.link;
           if (!url) continue;
-
           const ok = await hasEnoughImages(url, 3);
-          if (ok) {
-            tmp.push(item);
-          } else {
-            console.log("排除未達圖片數量:", url);
-          }
+          if (ok) tmp.push(item);
         }
-        finalResults = tmp;
-      } else {
-        console.log("未啟用圖片數量過濾，直接使用 baseFiltered");
+        finalResults = tmp.length > 0 ? tmp : baseFiltered;
       }
+
+      // Email + domain 去重
+      const deduped: any[] = [];
+      for (const item of finalResults) {
+        const url = item.link;
+        if (!url) continue;
+
+        let domain = "";
+        try { domain = new URL(url).hostname.replace(/^www\./, ""); } catch { domain = url; }
+        const domainKey = domain.toLowerCase();
+
+        // 需要 Email
+        let contactEmail = "";
+        if (requireEmail) {
+          const email = await fetchEmailFromPage(url);
+          if (!email) continue;
+          contactEmail = email;
+        }
+
+        if (avoidDuplicates && existingDomains.has(domainKey)) continue;
+        existingDomains.add(domainKey);
+
+        deduped.push({ ...item, domain, contactEmail });
+      }
+
+      // 寫入 leads（呼叫 storage）
+      const savedLeads: any[] = [];
+      for (let idx = 0; idx < deduped.length; idx++) {
+        const item = deduped[idx];
+        const link = item.link || "";
+        if (!link) continue;
+
+        const lastUpdatedAt = link ? await fetchLastUpdatedAt(link) : null;
+        const activityStatus = classifyActivity(lastUpdatedAt);
+
+        const insert = {
+          title: item.title || "(無標題)",
+          url: link,
+          domain: item.domain || "",
+          snippet: item.snippet || "",
+          keywords: [kw],
+          aiScore: 70 + (idx % 20),
+          trafficEstimate: null,
+          domainAuthority: null,
+          serpRank: `#${idx + 1}`,
+          contactEmail: item.contactEmail || "",
+          aiAnalysis: "",
+          status: "pending_review",
+          lastUpdatedAt,
+          activityStatus,
+        } as any;
+
+        try {
+          const created = await storage.createBloggerLead(insert);
+          savedLeads.push(created);
+        } catch (e) {
+          console.error("保存 lead 失敗:", getErrorDetail(e));
+        }
+      }
+
+      totalSaved += savedLeads.length;
 
       allResults.push({
         keyword: kw,
         total_results: data.search_information?.total_results,
-        filtered_count: finalResults.length,
-        results: finalResults,
+        filtered_count: deduped.length,
+        results: deduped,
+        savedLeadCount: savedLeads.length,
       });
     }
 
-    return res.json({ ok: true, results: allResults });
+    console.log(`[search/test] 全部關鍵字共寫入 ${totalSaved} 筆 leads`);
+    return res.json({ ok: true, totalSaved, results: allResults });
   } catch (err: unknown) {
     const detail = getErrorDetail(err);
     console.error("SerpAPI 測試搜尋失敗:", detail);

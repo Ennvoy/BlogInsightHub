@@ -38,6 +38,18 @@ function toCronExpression(schedule: Schedule): string {
  */
 async function executeSearch(schedule: Schedule): Promise<void> {
   try {
+    const now = new Date();
+    // 如果啟用時間尚未到，略過執行（但任務仍已註冊）
+    if (schedule.enabledAt) {
+      const en = new Date(schedule.enabledAt);
+      if (en > now) {
+        console.log(
+          `[排程執行] 尚未到啟用時間，略過執行: ${schedule.name} (enabledAt: ${en.toISOString()})`
+        );
+        return;
+      }
+    }
+
     console.log(`[排程執行] 開始執行排程: ${schedule.name} (${schedule.id})`);
 
     // 1. 更新 lastRunAt 和 lastRunStatus 為 "pending"
@@ -126,9 +138,9 @@ function calculateNextRun(schedule: Schedule): Date {
 export function registerSchedule(schedule: Schedule): void {
   // 檢查排程是否應該執行
   const now = new Date();
-  if (!schedule.isEnabled || schedule.enabledAt > now) {
+  if (!schedule.isEnabled) {
     console.log(
-      `[排程註冊] 跳過未啟用的排程: ${schedule.name} (enabled: ${schedule.isEnabled}, enabledAt: ${schedule.enabledAt})`
+      `[排程註冊] 跳過未啟用的排程: ${schedule.name} (enabled: ${schedule.isEnabled})`
     );
     return;
   }

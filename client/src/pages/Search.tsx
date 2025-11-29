@@ -205,6 +205,7 @@ export default function SearchPage() {
   const [scheduleFrequency, setScheduleFrequency] = useState("daily");
   const [scheduleDay, setScheduleDay] = useState(1); // for weekly/monthly
   const [scheduleHour, setScheduleHour] = useState(9);
+  const [scheduleMinute, setScheduleMinute] = useState(0);
   // 新增：排程開始日期（yyyy-mm-dd）
   const [scheduleStartDate, setScheduleStartDate] = useState<string | null>(() => {
     const d = new Date();
@@ -285,12 +286,52 @@ export default function SearchPage() {
       }
 
       const data = await res.json();
-      const list: string[] = data.longTailKeywords || [];
+      const list: string[] = (data.longTailKeywords || []).map((s: string) =>
+        String(s || "").trim()
+      );
 
-      const limited =
-        totalLimit && totalLimit > 0 ? list.slice(0, totalLimit) : list;
+      // 規則：每個核心關鍵字（coreList 的每一行）要產生 longTailCount 個
+      // 且不能與核心關鍵字完全相同；若同一核心不足則從其他候選補足。
+      const perLine = longTailCount && longTailCount > 0 ? longTailCount : 0;
+      const totalNeeded = coreList.length * perLine;
 
-      setGeneratedKeywords(limited);
+      const normalizedCores = coreList.map((c) => c.toLowerCase());
+
+      const picked: string[] = [];
+
+      // 1) 先針對每個核心挑選包含該核心字串的候選（且不等於核心本身）
+      for (const core of coreList) {
+        if (picked.length >= totalNeeded) break;
+        let taken = 0;
+        for (const cand of list) {
+          if (taken >= perLine) break;
+          if (!cand) continue;
+          const cLower = core.toLowerCase();
+          const candLower = cand.toLowerCase();
+          if (candLower === cLower) continue; // 不允許與核心完全相同
+          if (!candLower.includes(cLower)) continue; // 優先包含核心字
+          if (picked.includes(cand)) continue; // 不重複
+          picked.push(cand);
+          taken += 1;
+        }
+      }
+
+      // 2) 若還沒湊齊，從剩下的候選補足（去除與任何核心相同的）
+      if (picked.length < totalNeeded) {
+        for (const cand of list) {
+          if (picked.length >= totalNeeded) break;
+          if (!cand) continue;
+          const candLower = cand.toLowerCase();
+          if (normalizedCores.includes(candLower)) continue; // 跳過與任一核心相同
+          if (picked.includes(cand)) continue;
+          picked.push(cand);
+        }
+      }
+
+      // 3) 最後保險切到需求長度
+      const finalList = totalNeeded > 0 ? picked.slice(0, totalNeeded) : [];
+
+      setGeneratedKeywords(finalList);
 
       // ✅ 產生長尾成功後重新抓 usage → 即時更新 Gemini 用量
       fetchUsage();
@@ -432,7 +473,7 @@ export default function SearchPage() {
         dayOfWeek: scheduleFrequency === "weekly" ? (parseInt(String(scheduleDay)) as any) : undefined,
         dayOfMonth: scheduleFrequency === "monthly" ? (parseInt(String(scheduleDay)) as any) : undefined,
         hour: parseInt(String(scheduleHour)) as any,
-        minute: 0,
+        minute: parseInt(String(scheduleMinute)) as any,
         searchConfig: {
           industry,
           language,
@@ -450,7 +491,7 @@ export default function SearchPage() {
           try {
             if (!scheduleStartDate) return undefined;
             // combine date and hour (local time)
-            const dateTime = `${scheduleStartDate}T${String(scheduleHour).padStart(2, "0")}:00:00`;
+            const dateTime = `${scheduleStartDate}T${String(scheduleHour).padStart(2, "0")}:${String(scheduleMinute).padStart(2, "0")}:00`;
             const d = new Date(dateTime);
             return d; // return Date to match expected type
           } catch (e) {
@@ -1015,18 +1056,33 @@ export default function SearchPage() {
                 {scheduleFrequency === "daily" && (
                   <div className="space-y-2">
                     <Label htmlFor="hour">時間</Label>
-                    <Select value={String(scheduleHour)} onValueChange={(v) => setScheduleHour(Number(v))}>
-                      <SelectTrigger id="hour" className="text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => i).map((h) => (
-                          <SelectItem key={h} value={String(h)}>
-                            {String(h).padStart(2, "0")}:00
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex gap-2">
+                      <Select value={String(scheduleHour)} onValueChange={(v) => setScheduleHour(Number(v))}>
+                        <SelectTrigger id="hour" className="text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                            <SelectItem key={h} value={String(h)}>
+                              {String(h).padStart(2, "0")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={String(scheduleMinute)} onValueChange={(v) => setScheduleMinute(Number(v))}>
+                        <SelectTrigger id="minute" className="text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 60 }, (_, i) => i).map((m) => (
+                            <SelectItem key={m} value={String(m)}>
+                              {String(m).padStart(2, "0")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
 
@@ -1034,18 +1090,33 @@ export default function SearchPage() {
                 {(scheduleFrequency === "weekly" || scheduleFrequency === "monthly") && (
                   <div className="space-y-2">
                     <Label htmlFor="hour">執行時間</Label>
-                    <Select value={String(scheduleHour)} onValueChange={(v) => setScheduleHour(Number(v))}>
-                      <SelectTrigger id="hour" className="text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 24 }, (_, i) => i).map((h) => (
-                          <SelectItem key={h} value={String(h)}>
-                            {String(h).padStart(2, "0")}:00
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="flex gap-2">
+                      <Select value={String(scheduleHour)} onValueChange={(v) => setScheduleHour(Number(v))}>
+                        <SelectTrigger id="hour" className="text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                            <SelectItem key={h} value={String(h)}>
+                              {String(h).padStart(2, "0")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={String(scheduleMinute)} onValueChange={(v) => setScheduleMinute(Number(v))}>
+                        <SelectTrigger id="minute" className="text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 60 }, (_, i) => i).map((m) => (
+                            <SelectItem key={m} value={String(m)}>
+                              {String(m).padStart(2, "0")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
               </div>
