@@ -79,9 +79,23 @@ async function executeSearch(schedule: Schedule): Promise<void> {
       },
     };
 
-    // 調用後端搜尋端點（自己呼叫自己）
+    // 調用後端搜尋端點（使用現有的 /api/search/test 路由）
     const apiUrl = process.env.API_BASE_URL || "http://127.0.0.1:5001";
-    const response = await axios.post(`${apiUrl}/api/search`, searchParams, {
+
+    // 將 schedule 的 searchConfig 與 coreKeywords 映射為 /api/search/test 所需的 payload
+    const payload = {
+      coreKeywords: schedule.coreKeywords || [],
+      longTailKeywords: [],
+      language: searchConfig.language || "zh-tw",
+      region: searchConfig.region || "tw",
+      negativeKeywords: searchConfig.negativeKeywords || [],
+      excludeGovEdu: !!searchConfig.excludeGovEdu,
+      mustContainImages: !!searchConfig.requireImages,
+      requireEmail: !!searchConfig.requireEmail,
+      avoidDuplicates: !!searchConfig.avoidDuplicates,
+    };
+
+    const response = await axios.post(`${apiUrl}/api/search/test`, payload, {
       timeout: 60000,
     });
 
@@ -116,7 +130,7 @@ async function executeSearch(schedule: Schedule): Promise<void> {
 /**
  * 計算下次執行時間
  */
-function calculateNextRun(schedule: Schedule): Date {
+export function calculateNextRun(schedule: Schedule): Date {
   const now = new Date();
   const next = new Date(now);
 

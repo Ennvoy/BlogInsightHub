@@ -119,6 +119,12 @@ export default function ScheduleManager() {
       setEditingId(null);
       setFormData(null);
       alert("排程已更新");
+      // 變更儲存後重新整理頁面，以確保 UI 與後端狀態一致
+      try {
+        window.location.reload();
+      } catch (e) {
+        // ignore
+      }
     } catch (err: any) {
       console.error("更新排程失敗", err);
       alert(err.message || "更新失敗，請稍後再試");

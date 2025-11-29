@@ -260,12 +260,21 @@ app.post("/api/search/test", async (req, res) => {
         ? longTailKeywords
         : coreKeywords;
 
+    // 用系統設定來決定每次 SerpAPI 要抓取的結果數量
+    let serpNum = 10;
+    try {
+      const s = await storage.getSettings();
+      if (s && typeof (s as any).serpResultsNum === "number") serpNum = (s as any).serpResultsNum;
+    } catch (e) {
+      console.warn("無法載入 settings，使用預設 serp num=10", e);
+    }
+
     const paramsBase = {
       engine: "google",
       api_key: SERP_API_KEY,
       hl: language,
       gl: region,
-      num: 10,
+      num: serpNum,
     };
 
     const badWords: string[] = (negativeKeywords || []).map((w: any) => String(w).toLowerCase());

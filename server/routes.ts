@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { refreshSchedule, unregisterSchedule, registerSchedule } from "./scheduler";
+import { refreshSchedule, unregisterSchedule, registerSchedule, calculateNextRun } from "./scheduler";
 import { 
   insertSearchConfigSchema, 
   insertBloggerLeadSchema, 
@@ -10,6 +10,10 @@ import {
   insertScheduleSchema
 } from "@shared/schema";
 import { z } from "zod";
+
+const settingsUpdateSchema = z.object({
+  serpResultsNum: z.number().int().min(1).max(100).optional(),
+});
 
 export async function registerRoutes(
   httpServer: Server,
@@ -47,6 +51,39 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching search config:", error);
       res.status(500).json({ error: "Failed to fetch search configuration" });
+    }
+  });
+
+  // ============ Settings API ============
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const s = await storage.getSettings();
+      res.json(s);
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      const msg = (error && (error as any).message) || String(error);
+      if (/relation ".*settings" does not exist|no such table: settings/i.test(msg)) {
+        return res.status(500).json({ error: "Settings table not found. Run `npm run db:push` to create DB tables." });
+      }
+      res.status(500).json({ error: "Failed to fetch settings", detail: msg });
+    }
+  });
+
+  app.put("/api/settings", async (req, res) => {
+    try {
+      const validated = settingsUpdateSchema.parse(req.body);
+      const updated = await storage.updateSettings(validated as any);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid settings data", details: error.errors });
+      }
+      console.error("Error updating settings:", error);
+      const msg = (error && (error as any).message) || String(error);
+      if (/relation ".*settings" does not exist|no such table: settings/i.test(msg)) {
+        return res.status(500).json({ error: "Settings table not found. Run `npm run db:push` to create DB tables." });
+      }
+      res.status(500).json({ error: "Failed to update settings", detail: msg });
     }
   });
 
@@ -317,10 +354,23 @@ export async function registerRoutes(
 
       console.log("[routes] created schedule (db):", saved);
 
-      // 新建排程後自動註冊到排程引擎（使用 DB 回傳的物件）
-      if (saved) registerSchedule(saved);
+      // 計算並儲存下一次執行時間（讓 UI 立即可顯示）
+      try {
+        if (saved) {
+          const nextRun = calculateNextRun(saved);
+          await storage.updateSchedule(saved.id, { nextRunAt: nextRun } as any);
+        }
+      } catch (e) {
+        console.error("[routes] failed to set nextRunAt:", e);
+      }
 
-      res.status(201).json(saved || schedule);
+      // 重新從 DB 讀取最終物件
+      const final = saved ? await storage.getSchedule(saved.id) : schedule;
+
+      // 新建排程後自動註冊到排程引擎（使用最終 DB 回傳的物件）
+      if (final) registerSchedule(final);
+
+      res.status(201).json(final || schedule);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid schedule data", details: error.errors });
@@ -353,8 +403,19 @@ export async function registerRoutes(
 
       console.log("[routes] updated schedule (db):", refreshed);
 
-      // 更新後刷新排程註冊（使用 DB 回傳的物件）
-      if (refreshed) refreshSchedule(refreshed);
+      // 更新後計算 nextRunAt 並刷新排程註冊（使用 DB 回傳的物件）
+      try {
+        if (refreshed) {
+          const nextRun = calculateNextRun(refreshed);
+          await storage.updateSchedule(refreshed.id, { nextRunAt: nextRun } as any);
+        }
+      } catch (e) {
+        console.error("[routes] failed to set nextRunAt on update:", e);
+      }
+
+      // 重新讀取最終物件，並用它去刷新排程註冊
+      const finalRefreshed = refreshed ? await storage.getSchedule(refreshed.id) : undefined;
+      if (finalRefreshed) refreshSchedule(finalRefreshed);
 
       res.json(refreshed || schedule);
     } catch (error) {

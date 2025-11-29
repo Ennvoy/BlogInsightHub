@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { getSettings, updateSettings } from "@/lib/api";
 
 interface EmailTemplate {
   id: string;
@@ -41,6 +42,10 @@ export default function SettingsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EmailTemplate | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const [serpResultsNum, setSerpResultsNum] = useState<number | "">("");
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const handleAdd = () => {
     setEditingId(null);
@@ -84,6 +89,19 @@ export default function SettingsPage() {
       setTemplates(templates.filter((t) => t.id !== id));
     }
   };
+
+  useEffect(() => {
+    let mounted = true;
+    setLoadingSettings(true);
+    getSettings()
+      .then((s) => {
+        if (!mounted) return;
+        if (s && typeof s.serpResultsNum === "number") setSerpResultsNum(s.serpResultsNum);
+      })
+      .catch(() => {})
+      .finally(() => mounted && setLoadingSettings(false));
+    return () => { mounted = false };
+  }, []);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -234,7 +252,40 @@ export default function SettingsPage() {
           <CardDescription>更多系統設置將在此新增</CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">功能開發中...</p>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <Label>Serp 搜尋每次抓取筆數</Label>
+                <p className="text-xs text-muted-foreground">設定每次向 SerpAPI 查詢時要回傳的結果數量 (1-100)</p>
+              </div>
+              <div className="w-48 flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={serpResultsNum}
+                  onChange={(e) => setSerpResultsNum(e.target.value === "" ? "" : Number(e.target.value))}
+                />
+                <Button
+                  onClick={async () => {
+                    try {
+                      setSavingSettings(true);
+                      await updateSettings({ serpResultsNum: typeof serpResultsNum === 'number' ? serpResultsNum : 10 });
+                      alert("設定已儲存");
+                    } catch (e) {
+                      console.error(e);
+                      alert("儲存失敗");
+                    } finally {
+                      setSavingSettings(false);
+                    }
+                  }}
+                  disabled={loadingSettings || savingSettings}
+                >
+                  儲存
+                </Button>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

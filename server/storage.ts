@@ -14,6 +14,8 @@ import type {
   InsertCollaboration,
   Schedule,
   InsertSchedule,
+  Settings,
+  InsertSettings,
 } from "@shared/schema";
 
 const sql = neon(process.env.DATABASE_URL!);
@@ -60,6 +62,9 @@ export interface IStorage {
     monthlyCollaborations: number;
     activeCollaborations: number;
   }>;
+  // Settings
+  getSettings(): Promise<Settings>;
+  updateSettings(payload: Partial<InsertSettings>): Promise<Settings>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -239,6 +244,51 @@ export class DatabaseStorage implements IStorage {
       .where(eq(schema.schedules.id, id))
       .returning();
     return results.length > 0;
+  }
+
+  // Settings
+  async getSettings(): Promise<Settings> {
+    const rows = await db.select().from(schema.settings).limit(1);
+    if (rows && rows.length > 0) return rows[0];
+
+    // If not exist, create default row
+    const id = crypto.randomUUID();
+    const now = new Date();
+    const results = await db.insert(schema.settings).values({
+      id,
+      serpResultsNum: 10,
+      createdAt: now,
+      updatedAt: now,
+    } as any).returning();
+    return results[0];
+  }
+
+  async updateSettings(payload: Partial<InsertSettings>): Promise<Settings> {
+    const rows = await db.select().from(schema.settings).limit(1);
+    if (!rows || rows.length === 0) {
+      // insert new
+      const id = crypto.randomUUID();
+      const now = new Date();
+      const insertData: any = {
+        id,
+        serpResultsNum: payload.serpResultsNum ?? 10,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const results = await db.insert(schema.settings).values(insertData).returning();
+      return results[0];
+    }
+
+    const existing = rows[0];
+    const updateData: any = { updatedAt: new Date() };
+    if (typeof payload.serpResultsNum === "number") updateData.serpResultsNum = payload.serpResultsNum;
+
+    const results = await db
+      .update(schema.settings)
+      .set(updateData)
+      .where(eq(schema.settings.id, existing.id))
+      .returning();
+    return results[0];
   }
 
   // Stats
